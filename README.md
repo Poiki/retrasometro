@@ -189,6 +189,10 @@ Idioma de API:
 - sin parámetro `lang` en URL.
 - usa cabecera `Accept-Language` (`es` o `en`).
 
+Precisión numérica:
+
+- los campos acumulados grandes (por ejemplo `accumulatedDelayMinutes`) se exponen como `string` para evitar pérdida de precisión con valores muy altos.
+
 <a id="flujo-consumo-api"></a>
 ### Flujo de consumo API
 

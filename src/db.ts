@@ -1156,20 +1156,20 @@ export class DB {
         `
       SELECT
         cod_product,
-        COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS accumulated_delay_minutes,
+        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
         COUNT(*) AS observations,
         COUNT(DISTINCT cod_comercial) AS affected_trains
       FROM train_observations
       WHERE captured_at >= ?
       GROUP BY cod_product
-      ORDER BY accumulated_delay_minutes DESC, observations DESC
+      ORDER BY COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC, observations DESC
       LIMIT 1
       `,
       )
       .get(dayStartEpoch) as
       | {
           cod_product: number;
-          accumulated_delay_minutes: number;
+          accumulated_delay_minutes: string;
           observations: number;
           affected_trains: number;
         }
@@ -1249,7 +1249,7 @@ export class DB {
         COALESCE(SUM(CASE WHEN ult_retraso > 15 THEN 1 ELSE 0 END), 0) AS delayed_over_15_count,
         COALESCE(SUM(CASE WHEN ult_retraso > 60 THEN 1 ELSE 0 END), 0) AS severe_count,
         COALESCE(SUM(CASE WHEN accesible = 1 THEN 1 ELSE 0 END), 0) AS accessible_count,
-        COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS accumulated_delay_minutes,
+        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
         MIN(captured_at) AS min_ts,
         MAX(captured_at) AS max_ts
       FROM train_observations
@@ -1266,7 +1266,7 @@ export class DB {
           delayed_over_15_count: number;
           severe_count: number;
           accessible_count: number;
-          accumulated_delay_minutes: number;
+          accumulated_delay_minutes: string;
           min_ts: number | null;
           max_ts: number | null;
         }
@@ -1281,7 +1281,7 @@ export class DB {
         `
       SELECT
         cod_product,
-        COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS accumulated_delay_minutes,
+        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
         COALESCE(ROUND(AVG(ult_retraso), 2), 0) AS avg_delay,
         COALESCE(MAX(ult_retraso), 0) AS max_delay,
         COUNT(*) AS observations,
@@ -1289,14 +1289,14 @@ export class DB {
       FROM train_observations
       WHERE captured_at >= ? AND captured_at <= ?
       GROUP BY cod_product
-      ORDER BY accumulated_delay_minutes DESC, observations DESC
+      ORDER BY COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC, observations DESC
       LIMIT 1
       `,
       )
       .get(since, until) as
       | {
           cod_product: number;
-          accumulated_delay_minutes: number;
+          accumulated_delay_minutes: string;
           avg_delay: number;
           max_delay: number;
           observations: number;
@@ -1309,7 +1309,7 @@ export class DB {
         `
       SELECT
         COALESCE(des_corridor, 'Sin corredor') AS corridor,
-        COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS accumulated_delay_minutes,
+        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
         COALESCE(ROUND(AVG(ult_retraso), 2), 0) AS avg_delay,
         COALESCE(MAX(ult_retraso), 0) AS max_delay,
         COUNT(*) AS observations,
@@ -1317,14 +1317,14 @@ export class DB {
       FROM train_observations
       WHERE captured_at >= ? AND captured_at <= ?
       GROUP BY des_corridor
-      ORDER BY accumulated_delay_minutes DESC, observations DESC
+      ORDER BY COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC, observations DESC
       LIMIT 1
       `,
       )
       .get(since, until) as
       | {
           corridor: string;
-          accumulated_delay_minutes: number;
+          accumulated_delay_minutes: string;
           avg_delay: number;
           max_delay: number;
           observations: number;
@@ -1341,11 +1341,11 @@ export class DB {
         COUNT(DISTINCT cod_comercial) AS trains,
         COALESCE(ROUND(AVG(ult_retraso), 2), 0) AS avg_delay,
         COALESCE(MAX(ult_retraso), 0) AS max_delay,
-        COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS accumulated_delay_minutes
+        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes
       FROM train_observations
       WHERE captured_at >= ? AND captured_at <= ?
       GROUP BY cod_product
-      ORDER BY observations DESC, accumulated_delay_minutes DESC
+      ORDER BY observations DESC, COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC
       LIMIT 10
       `,
       )
@@ -1399,7 +1399,7 @@ export class DB {
         uniqueTrains: summaryRow?.unique_trains ?? 0,
         avgDelay: summaryRow?.avg_delay ?? 0,
         maxDelay: summaryRow?.max_delay ?? 0,
-        accumulatedDelayMinutes: summaryRow?.accumulated_delay_minutes ?? 0,
+        accumulatedDelayMinutes: summaryRow?.accumulated_delay_minutes ?? "0",
         onTimePct: pct(summaryRow?.on_time_count ?? 0),
         delayedOver15Pct: pct(summaryRow?.delayed_over_15_count ?? 0),
         severePct: pct(summaryRow?.severe_count ?? 0),

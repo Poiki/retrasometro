@@ -33,8 +33,8 @@ const recoverHistoryBtnEl = document.querySelector("#recover-history-btn");
 const I18N = {
   es: {
     kicker: "retrasometro",
-    title: "Panel operativo de retrasos y actividad",
-    subtitle: "Ingesta cada minuto, snapshots compactados y métricas en tiempo real.",
+    title: "Retrasos ferroviarios en tiempo real",
+    subtitle: "",
     langLabel: "Idioma",
     apiDocs: "API",
     rawToggle: "Datos en bruto",
@@ -127,8 +127,8 @@ const I18N = {
   },
   en: {
     kicker: "retrasometro",
-    title: "Operations dashboard for delays and activity",
-    subtitle: "One-minute ingestion, compacted snapshots, and live metrics.",
+    title: "Real-time rail delays",
+    subtitle: "",
     langLabel: "Language",
     apiDocs: "API",
     rawToggle: "Raw data",
@@ -284,6 +284,46 @@ const escapeHtml = (value) => {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+};
+
+const toBigIntLoose = (value) => {
+  if (typeof value === "bigint") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return 0n;
+    }
+    return BigInt(Math.trunc(value));
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return 0n;
+    }
+
+    const intLike = trimmed.match(/^(-?\d+)(?:[.,]\d+)?$/);
+    if (intLike) {
+      try {
+        return BigInt(intLike[1]);
+      } catch {
+        return 0n;
+      }
+    }
+  }
+
+  return 0n;
+};
+
+const formatLargeInt = (value) => {
+  const parsed = toBigIntLoose(value);
+  try {
+    return numberFmt.format(parsed);
+  } catch {
+    return parsed.toString();
+  }
 };
 
 const delayClass = (delay) => {
@@ -482,7 +522,7 @@ const renderOverviewCards = (overview, today, typeInsights) => {
   const volume = typeInsights?.volume ?? null;
 
   const problematicValue = problematic
-    ? `${problematic.productName} · ${numberFmt.format(Math.round(problematic.accumulatedDelayMinutes))} ${t("minutes")}`
+    ? `${problematic.productName} · ${formatLargeInt(problematic.accumulatedDelayMinutes)} ${t("minutes")}`
     : t("noTypeData");
 
   const volumeValue = volume
@@ -611,7 +651,7 @@ const renderHistorical = (historical) => {
     { label: t("histCardUniqueTrains"), value: numberFmt.format(summary.uniqueTrains || 0) },
     { label: t("histCardAvgDelay"), value: `${Number(summary.avgDelay || 0).toFixed(1)} ${t("minutes")}` },
     { label: t("histCardMaxDelay"), value: `${summary.maxDelay || 0} ${t("minutes")}` },
-    { label: t("histCardAccumDelay"), value: `${numberFmt.format(Math.round(summary.accumulatedDelayMinutes || 0))} ${t("minutes")}` },
+    { label: t("histCardAccumDelay"), value: `${formatLargeInt(summary.accumulatedDelayMinutes)} ${t("minutes")}` },
     { label: t("histCardOnTimePct"), value: `${Number(summary.onTimePct || 0).toFixed(1)}%` },
     { label: t("histCardSeverePct"), value: `${Number(summary.severePct || 0).toFixed(1)}%` },
     { label: t("histCardAvgBatch"), value: numberFmt.format(Math.round(ingestion.avgTrainsPerBatch || 0)) },
@@ -637,7 +677,7 @@ const renderHistorical = (historical) => {
     highlightRows.push(`
       <div class="list-item">
         <div class="name">${escapeHtml(t("histTopType"))}: ${escapeHtml(topType.productName || "-")}</div>
-        <div class="meta">${numberFmt.format(Math.round(topType.accumulatedDelayMinutes || 0))} ${t("minutes")} · ${numberFmt.format(topType.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topType.trains || 0)} ${t("histTrainsShort")}</div>
+        <div class="meta">${formatLargeInt(topType.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topType.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topType.trains || 0)} ${t("histTrainsShort")}</div>
       </div>
     `);
   }
@@ -647,7 +687,7 @@ const renderHistorical = (historical) => {
     highlightRows.push(`
       <div class="list-item">
         <div class="name">${escapeHtml(t("histTopCorridor"))}: ${escapeHtml(corridorName)}</div>
-        <div class="meta">${numberFmt.format(Math.round(topCorridor.accumulatedDelayMinutes || 0))} ${t("minutes")} · ${numberFmt.format(topCorridor.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topCorridor.trains || 0)} ${t("histTrainsShort")}</div>
+        <div class="meta">${formatLargeInt(topCorridor.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topCorridor.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topCorridor.trains || 0)} ${t("histTrainsShort")}</div>
       </div>
     `);
   }
