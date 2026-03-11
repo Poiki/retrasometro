@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# build / coverage
+dist/
+out/
+coverage/
+*.lcov
+*.tsbuildinfo
+*.tgz
+
+# logs / temp
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+
+# local env / private files
+.env*
+!.env.example
+*.local
+*.local.*
+*.private.*
+*.secret*
+
+# local runtime data
+data/**
+
+# tool caches
+.cache/
+.eslintcache
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store

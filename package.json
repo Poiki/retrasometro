@@ -1,0 +1,22 @@
+{
+  "name": "retrasometro",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "check": "bunx tsc --noEmit",
+    "migrate:pg": "bun scripts/migrate-sqlite-to-postgres.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/pg": "^8.18.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "pg": "^8.20.0"
+  }
+}

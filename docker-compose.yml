@@ -1,0 +1,74 @@
+services:
+  app:
+    build: .
+    container_name: retrasometro-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DB_PATH: /app/data/renfe.db
+      SQLITE_PATH: /app/data/renfe.db
+      POLL_INTERVAL_MS: 60000
+      FETCH_TIMEOUT_MS: 12000
+      STALE_TRAIN_SECONDS: 180
+      SNAPSHOT_RETENTION_HOURS: 96
+      SNAPSHOT_HEARTBEAT_SECONDS: 300
+      COMPACT_EVERY_RUNS: 15
+      STATIONS_REFRESH_HOURS: 24
+      API_KEY_TTL_SECONDS: 900
+      API_RATE_LIMIT_MS: 1000
+      RAW_MAX_TRAINS: 5000
+      HISTORY_RETENTION_DAYS: 0
+      RECOVERY_LOOKBACK_HOURS: 72
+      RENFE_ENDPOINTS: https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json
+      STATIONS_ENDPOINT: https://tiempo-real.largorecorrido.renfe.com/data/estaciones.geojson
+      CACHE_FILE: /app/data/cache/flotaLD.latest.json
+      BOOTSTRAP_SQLITE_PATH: /seed-data/renfe.db
+      BOOTSTRAP_CACHE_PATH: /seed-data/cache/flotaLD.latest.json
+      AUTO_MIGRATE_PG_ON_START: 1
+      POSTGRES_URL: postgresql://renfe:renfe@postgres:5432/renfe_analytics
+      MIGRATION_BATCH_SIZE: 500
+    volumes:
+      - appdata:/app/data
+      - ./data:/seed-data:ro
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: retrasometro-pg
+    environment:
+      POSTGRES_USER: renfe
+      POSTGRES_PASSWORD: renfe
+      POSTGRES_DB: renfe_analytics
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renfe -d renfe_analytics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  migrate_to_postgres:
+    build: .
+    container_name: retrasometro-migrate
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SQLITE_PATH: /app/data/renfe.db
+      POSTGRES_URL: postgresql://renfe:renfe@postgres:5432/renfe_analytics
+      MIGRATION_BATCH_SIZE: 500
+    volumes:
+      - appdata:/app/data
+    command: ["bun", "run", "migrate:pg"]
+
+volumes:
+  appdata:
+  pgdata:

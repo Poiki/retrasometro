@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>retrasometro · API</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid"></div>
+    <main class="container docs-page">
+      <header class="hero docs-hero">
+        <div>
+          <p class="kicker" id="docs-kicker">retrasometro API</p>
+          <h1 id="docs-title">Referencia API y acceso con clave temporal</h1>
+          <p class="subtitle" id="docs-subtitle">
+            Esta vista está separada del panel principal. Aquí puedes solicitar y gestionar tu clave.
+          </p>
+        </div>
+
+        <div class="hero-side">
+          <div class="hero-controls">
+            <label class="lang-wrap" for="docs-lang-switch">
+              <span id="docs-lang-label">Idioma</span>
+              <select id="docs-lang-switch" aria-label="Seleccionar idioma">
+                <option value="es">ES</option>
+                <option value="en">EN</option>
+              </select>
+            </label>
+            <button id="back-home-btn" class="ghost-btn" type="button">Volver al panel</button>
+          </div>
+          <div class="status-pill" id="docs-status">Cargando...</div>
+        </div>
+      </header>
+
+      <section class="panel docs-panel">
+        <div class="panel-header wrap">
+          <h2 id="security-title">Autenticación y límites</h2>
+          <button id="request-key-btn" class="ghost-btn" type="button">Pedir clave temporal</button>
+        </div>
+        <p class="subtitle" id="security-summary"></p>
+        <div id="auth-steps" class="auth-steps"></div>
+
+        <div id="key-panel" class="key-panel hidden">
+          <div class="key-row"><strong id="key-label">Clave API</strong></div>
+          <pre id="key-value" class="raw-json">-</pre>
+          <div class="key-meta" id="key-expiry"></div>
+          <div class="raw-actions">
+            <button id="copy-key-btn" class="ghost-btn" type="button">Copiar clave</button>
+            <button id="copy-curl-btn" class="ghost-btn" type="button">Copiar cURL</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel docs-panel">
+        <div class="panel-header">
+          <h2 id="endpoints-title">Referencia de endpoints</h2>
+        </div>
+        <div id="endpoints-list" class="api-endpoints"></div>
+      </section>
+
+      <section class="panel docs-panel">
+        <div class="panel-header">
+          <h2 id="example-title">Ejemplo de uso</h2>
+        </div>
+        <pre id="curl-example" class="raw-json">curl ...</pre>
+      </section>
+    </main>
+
+    <script type="module" src="/api-docs.js"></script>
+  </body>
+</html>

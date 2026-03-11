@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>retrasometro</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid"></div>
+    <main class="container">
+      <header class="hero">
+        <div>
+          <p class="kicker" id="kicker-text">retrasometro</p>
+          <h1 id="title-text">Panel operativo de retrasos y actividad</h1>
+          <p class="subtitle" id="subtitle-text">
+            Ingesta cada minuto, snapshots compactados y métricas en tiempo real.
+          </p>
+        </div>
+
+        <div class="hero-side">
+          <div class="hero-controls">
+            <label class="lang-wrap" for="lang-switch">
+              <span id="lang-label">Idioma</span>
+              <select id="lang-switch" aria-label="Seleccionar idioma">
+                <option value="es">ES</option>
+                <option value="en">EN</option>
+              </select>
+            </label>
+            <button id="api-docs-btn" class="ghost-btn" type="button">API</button>
+            <button id="raw-toggle-btn" class="ghost-btn" type="button">Datos en bruto</button>
+          </div>
+          <div class="status-pill" id="status-pill">Cargando...</div>
+        </div>
+      </header>
+
+      <section class="panel raw-panel hidden" id="raw-panel">
+        <div class="panel-header wrap">
+          <h2 id="raw-title">Datos en bruto en tiempo real</h2>
+          <div class="raw-actions">
+            <button id="recover-history-btn" class="ghost-btn" type="button">Recuperar histórico</button>
+            <button id="copy-raw-btn" class="ghost-btn" type="button">Copiar endpoint</button>
+            <button id="close-raw-btn" class="ghost-btn" type="button">Cerrar</button>
+          </div>
+        </div>
+        <p class="raw-meta" id="raw-meta">-</p>
+        <pre id="raw-json" class="raw-json">{ }</pre>
+      </section>
+
+      <section class="cards" id="overview-cards"></section>
+
+      <section class="panel historical-panel">
+        <div class="panel-header wrap">
+          <h2 id="historical-title">Estadísticas históricas</h2>
+          <div class="history-controls" id="history-controls">
+            <button class="history-btn" data-hours="24" type="button">24h</button>
+            <button class="history-btn" data-hours="168" type="button">7d</button>
+            <button class="history-btn" data-hours="720" type="button">30d</button>
+          </div>
+        </div>
+
+        <div class="history-range">
+          <label id="history-from-label" for="history-from">Desde</label>
+          <input id="history-from" type="datetime-local" />
+          <label id="history-to-label" for="history-to">Hasta</label>
+          <input id="history-to" type="datetime-local" />
+          <button id="history-range-apply" class="ghost-btn" type="button">Aplicar rango</button>
+          <button id="history-range-clear" class="ghost-btn" type="button">Limpiar</button>
+        </div>
+
+        <div class="cards" id="historical-cards"></div>
+
+        <div class="inside-grid">
+          <div class="subpanel">
+            <div class="panel-header">
+              <h3 id="historical-highlights-title">Hallazgos del período</h3>
+            </div>
+            <div id="historical-highlights" class="list"></div>
+          </div>
+
+          <div class="subpanel">
+            <div class="panel-header">
+              <h3 id="historical-products-title">Distribución histórica por tipo</h3>
+            </div>
+            <div id="historical-products" class="bars"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-grid">
+        <article class="panel">
+          <div class="panel-header">
+            <h2 id="delay-title">Distribución de retrasos</h2>
+            <span id="last-seen">-</span>
+          </div>
+          <div id="delay-buckets" class="bars"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <h2 id="products-title">Tipos de tren activos</h2>
+          </div>
+          <div id="products" class="bars"></div>
+        </article>
+      </section>
+
+      <section class="panel-grid">
+        <article class="panel">
+          <div class="panel-header">
+            <h2 id="corridors-title">Corredores con más tráfico</h2>
+          </div>
+          <div id="corridors" class="list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <h2 id="today-title">Acumulado del día</h2>
+          </div>
+          <div id="today-metrics" class="today-grid"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header wrap">
+          <h2 id="trains-title">Trenes activos</h2>
+          <form id="filters" class="filters" autocomplete="off">
+            <input id="search" type="search" placeholder="Buscar por tren, corredor o estación" />
+            <input id="min-delay" type="number" min="0" step="1" placeholder="Min retraso" />
+            <button id="apply-btn" type="submit">Aplicar</button>
+          </form>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th id="th-train">Tren</th>
+                <th id="th-type">Tipo</th>
+                <th id="th-corridor">Corredor</th>
+                <th id="th-route">Origen -> Destino</th>
+                <th id="th-next">Prox. estación</th>
+                <th id="th-delay">Retraso</th>
+                <th id="th-last">Última señal</th>
+              </tr>
+            </thead>
+            <tbody id="trains-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
