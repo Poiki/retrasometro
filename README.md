@@ -277,6 +277,12 @@ docker compose --profile tools run --rm migrate_to_postgres
 
 El script crea esquema en Postgres, vacía tablas destino y copia todas las tablas históricas.
 
+### Licencia
+
+Este proyecto se distribuye bajo:
+
+- `Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)`
+
 ---
 
 Este proyecto consume endpoints públicos desde frontend oficial de RENFE y está pensado para analítica/monitorización técnica.

@@ -4,18 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>retrasometro</title>
+    <link rel="icon" type="image/webp" href="/assets/logos/favicons/icon.webp" />
+    <link rel="icon" type="image/x-icon" href="/assets/logos/favicons/icon.ico" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="bg-grid"></div>
     <main class="container">
       <header class="hero">
-        <div>
-          <p class="kicker" id="kicker-text">retrasometro</p>
-          <h1 id="title-text">Panel operativo de retrasos y actividad</h1>
-          <p class="subtitle" id="subtitle-text">
-            Ingesta cada minuto, snapshots compactados y métricas en tiempo real.
-          </p>
+        <div class="hero-brand">
+          <picture class="brand-mark">
+            <source srcset="/assets/logos/primary/logo.webp" type="image/webp" />
+            <img src="/assets/logos/primary/logo.jpg" alt="Logo de retrasometro" />
+          </picture>
+          <div>
+            <p class="kicker" id="kicker-text">retrasometro</p>
+            <h1 id="title-text">Panel operativo de retrasos y actividad</h1>
+            <p class="subtitle" id="subtitle-text">
+              Ingesta cada minuto, snapshots compactados y métricas en tiempo real.
+            </p>
+          </div>
         </div>
 
         <div class="hero-side">
@@ -148,6 +156,25 @@
       </section>
     </main>
 
+    <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>
+    <script>
+      (function initKofiWidget() {
+        const storedLang = localStorage.getItem("retrasometro_lang") ?? localStorage.getItem("renfe_lang");
+        const browserLang = (navigator.language || "").toLowerCase();
+        const lang = storedLang === "en" ? "en" : storedLang === "es" ? "es" : browserLang.startsWith("en") ? "en" : "es";
+        const buttonText = lang === "en" ? "Support me" : "Apóyame";
+
+        if (window.kofiWidgetOverlay && typeof window.kofiWidgetOverlay.draw === "function") {
+          window.kofiWidgetOverlay.draw("mrpoiki", {
+            type: "floating-chat",
+            "floating-chat.position": "left",
+            "floating-chat.donateButton.text": buttonText,
+            "floating-chat.donateButton.background-color": "#323842",
+            "floating-chat.donateButton.text-color": "#fff",
+          });
+        }
+      })();
+    </script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>
