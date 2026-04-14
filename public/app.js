@@ -4,6 +4,8 @@ const productsEl = document.querySelector("#products");
 const corridorsEl = document.querySelector("#corridors");
 const todayMetricsEl = document.querySelector("#today-metrics");
 const trainsBodyEl = document.querySelector("#trains-body");
+const corridorsSearchInputEl = document.querySelector("#corridors-search");
+const historicalProductsSearchInputEl = document.querySelector("#historical-products-search");
 const statusPillEl = document.querySelector("#status-pill");
 const lastSeenEl = document.querySelector("#last-seen");
 const historicalCardsEl = document.querySelector("#historical-cards");
@@ -18,6 +20,10 @@ const historyRangeClearBtnEl = document.querySelector("#history-range-clear");
 const filtersForm = document.querySelector("#filters");
 const searchInput = document.querySelector("#search");
 const minDelayInput = document.querySelector("#min-delay");
+const syncBtnEl = document.querySelector("#sync-btn");
+const exportCsvBtnEl = document.querySelector("#export-csv-btn");
+const exportExcelBtnEl = document.querySelector("#export-excel-btn");
+const sortButtons = [...document.querySelectorAll("[data-sort]")];
 
 const langSwitchEl = document.querySelector("#lang-switch");
 const apiDocsBtnEl = document.querySelector("#api-docs-btn");
@@ -112,6 +118,9 @@ const I18N = {
     statusError: "Error",
     lastSignal: "Última señal",
     noRows: "No hay trenes para este filtro.",
+    noLocalRows: "No hay resultados para el filtro local.",
+    corridorsSearchPlaceholder: "Filtrar corredores",
+    historicalProductsSearchPlaceholder: "Filtrar tipos históricos",
     routeSeparator: " -> ",
     keyRequestFailed: "No se pudo obtener clave API",
     rawGenerated: "Generado",
@@ -122,6 +131,14 @@ const I18N = {
     rawCopyFail: "No se pudo copiar el endpoint",
     recoverDone: "Recuperación completada",
     recoverFail: "No se pudo recuperar histórico",
+    syncNow: "Sincronizar",
+    syncAvailable: "Hay datos nuevos. Pulsa sincronizar.",
+    exportCsv: "Exportar CSV",
+    exportExcel: "Exportar Excel",
+    exportDone: "Exportación completada",
+    exportFail: "No se pudo exportar",
+    sortAsc: "Ascendente",
+    sortDesc: "Descendente",
     minutes: "min",
     docsOpenFail: "No se pudo abrir la documentación API",
   },
@@ -206,6 +223,9 @@ const I18N = {
     statusError: "Error",
     lastSignal: "Last signal",
     noRows: "No trains match the current filters.",
+    noLocalRows: "No results for this local filter.",
+    corridorsSearchPlaceholder: "Filter corridors",
+    historicalProductsSearchPlaceholder: "Filter historical types",
     routeSeparator: " -> ",
     keyRequestFailed: "Could not request API key",
     rawGenerated: "Generated",
@@ -216,6 +236,14 @@ const I18N = {
     rawCopyFail: "Could not copy endpoint",
     recoverDone: "Recovery completed",
     recoverFail: "Could not recover history",
+    syncNow: "Sync",
+    syncAvailable: "New data available. Click sync.",
+    exportCsv: "Export CSV",
+    exportExcel: "Export Excel",
+    exportDone: "Export completed",
+    exportFail: "Could not export",
+    sortAsc: "Ascending",
+    sortDesc: "Descending",
     minutes: "min",
     docsOpenFail: "Could not open API docs",
   },
@@ -239,15 +267,27 @@ const state = {
   offset: 0,
   lang: storageGet("retrasometro_lang", "renfe_lang") === "en" ? "en" : "es",
   historyHours: Number(storageGet("retrasometro_history_hours", "renfe_history_hours")) || 168,
-  historyFrom: storageGet("retrasometro_history_from", "renfe_history_from") || "",
-  historyTo: storageGet("retrasometro_history_to", "renfe_history_to") || "",
+  historyFrom: "",
+  historyTo: "",
+  corridorsQuery: "",
+  historicalProductsQuery: "",
   apiKey: null,
   apiKeyExpiresAt: 0,
+  apiMinIntervalMs: 200,
   requestQueue: Promise.resolve(),
   lastRequestAtMs: 0,
+  lastUserActivityAtMs: Date.now(),
+  lastAppliedSuccessAt: 0,
+  hasPendingSync: false,
+  trainsItems: [],
+  sortBy: "delay",
+  sortDir: "desc",
   isRawOpen: false,
   rawTimer: null,
 };
+
+const AUTO_REFRESH_MS = 20_000;
+const INACTIVITY_SYNC_MS = 60_000;
 
 let latestDashboard = null;
 let numberFmt = new Intl.NumberFormat("es-ES");
@@ -354,6 +394,71 @@ const updateTextContent = (id, value) => {
   }
 };
 
+const markUserActivity = () => {
+  state.lastUserActivityAtMs = Date.now();
+};
+
+const isUserInactive = () => Date.now() - state.lastUserActivityAtMs >= INACTIVITY_SYNC_MS;
+
+const setPendingSync = (pending) => {
+  state.hasPendingSync = pending;
+  if (!syncBtnEl) {
+    return;
+  }
+
+  syncBtnEl.classList.toggle("hidden", !pending);
+};
+
+const normalizeText = (value) => String(value ?? "").toLocaleLowerCase(locale());
+
+const getTrainSortValue = (train, field) => {
+  if (field === "train") return normalizeText(train.cod_comercial);
+  if (field === "type") return normalizeText(train.product_name);
+  if (field === "corridor") return normalizeText(train.des_corridor);
+  if (field === "route")
+    return normalizeText(
+      stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino),
+    );
+  if (field === "next")
+    return normalizeText(nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est));
+  if (field === "delay") return Number(train.ult_retraso ?? 0);
+  if (field === "last") return Number(train.last_seen_at ?? 0);
+  return "";
+};
+
+const sortTrains = (items) => {
+  const direction = state.sortDir === "asc" ? 1 : -1;
+  const field = state.sortBy;
+
+  return [...items].sort((a, b) => {
+    const va = getTrainSortValue(a, field);
+    const vb = getTrainSortValue(b, field);
+
+    if (typeof va === "number" && typeof vb === "number") {
+      return (va - vb) * direction;
+    }
+
+    return String(va).localeCompare(String(vb), locale()) * direction;
+  });
+};
+
+const renderSortIndicators = () => {
+  for (const button of sortButtons) {
+    const field = button.dataset.sort;
+    if (!field) {
+      continue;
+    }
+
+    const indicator = document.querySelector(`#sort-indicator-${field}`);
+    const isActive = field === state.sortBy;
+    button.classList.toggle("active", isActive);
+
+    if (indicator) {
+      indicator.textContent = isActive ? (state.sortDir === "asc" ? "↑" : "↓") : "↕";
+    }
+  }
+};
+
 const setHistoryButtonsActive = () => {
   const hasCustom = Boolean(state.historyFrom || state.historyTo);
   for (const button of historyButtons) {
@@ -389,6 +494,9 @@ const applyStaticTexts = () => {
   updateTextContent("history-range-clear", t("historyClearRange"));
   updateTextContent("trains-title", t("trainsTitle"));
   updateTextContent("apply-btn", t("apply"));
+  updateTextContent("sync-btn", t("syncNow"));
+  updateTextContent("export-csv-btn", t("exportCsv"));
+  updateTextContent("export-excel-btn", t("exportExcel"));
   updateTextContent("th-train", t("thTrain"));
   updateTextContent("th-type", t("thType"));
   updateTextContent("th-corridor", t("thCorridor"));
@@ -399,6 +507,12 @@ const applyStaticTexts = () => {
 
   searchInput.placeholder = t("searchPlaceholder");
   minDelayInput.placeholder = t("minDelayPlaceholder");
+  if (corridorsSearchInputEl) {
+    corridorsSearchInputEl.placeholder = t("corridorsSearchPlaceholder");
+  }
+  if (historicalProductsSearchInputEl) {
+    historicalProductsSearchInputEl.placeholder = t("historicalProductsSearchPlaceholder");
+  }
 
   if (!latestDashboard) {
     setStatus(t("statusLoading"));
@@ -407,6 +521,7 @@ const applyStaticTexts = () => {
   setHistoryButtonsActive();
   historyFromInputEl.value = state.historyFrom;
   historyToInputEl.value = state.historyTo;
+  renderSortIndicators();
 };
 
 const buildUrl = (path) => {
@@ -433,6 +548,10 @@ const requestApiKey = async ({ force = false } = {}) => {
   const data = await response.json();
   state.apiKey = data.apiKey;
   state.apiKeyExpiresAt = Number(data.expiresAt || 0);
+  const minInterval = Number(data?.limits?.minIntervalMs);
+  if (Number.isFinite(minInterval) && minInterval >= 0) {
+    state.apiMinIntervalMs = Math.max(0, Math.trunc(minInterval));
+  }
 };
 
 const isAuthError = (payload) => {
@@ -449,7 +568,7 @@ const apiFetch = async (path, options = {}) => {
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const elapsed = Date.now() - state.lastRequestAtMs;
-      const waitMs = Math.max(0, 1000 - elapsed);
+      const waitMs = Math.max(0, state.apiMinIntervalMs - elapsed);
       if (waitMs > 0) {
         await sleep(waitMs);
       }
@@ -555,6 +674,7 @@ const renderOverviewCards = (overview, today, typeInsights) => {
 };
 
 const renderBarRows = (target, rows) => {
+  target.classList.remove("skeleton-bars");
   target.innerHTML = rows
     .map((row) => {
       const pct = Math.max(0, Math.min(100, row.pct));
@@ -600,7 +720,22 @@ const renderProducts = (products) => {
 };
 
 const renderCorridors = (corridors) => {
-  corridorsEl.innerHTML = corridors
+  const filter = state.corridorsQuery.trim().toLocaleLowerCase(locale());
+  const visibleCorridors =
+    filter.length === 0
+      ? corridors
+      : corridors.filter((item) =>
+          String(item.corridor || "")
+            .toLocaleLowerCase(locale())
+            .includes(filter),
+        );
+
+  if (!Array.isArray(visibleCorridors) || visibleCorridors.length === 0) {
+    corridorsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
+    return;
+  }
+
+  corridorsEl.innerHTML = visibleCorridors
     .map(
       (item) => `
       <div class="list-item">
@@ -614,6 +749,7 @@ const renderCorridors = (corridors) => {
 };
 
 const renderToday = (today) => {
+  todayMetricsEl.classList.remove("skeleton-today");
   const items = [
     { label: t("todayDate"), value: today.day },
     { label: t("todayUnique"), value: numberFmt.format(today.uniqueTrains) },
@@ -636,6 +772,8 @@ const renderToday = (today) => {
 };
 
 const renderHistorical = (historical) => {
+  historicalProductsEl.classList.remove("skeleton-bars");
+  historicalHighlightsEl.classList.remove("skeleton-list");
   if (!historical || !historical.summary) {
     historicalCardsEl.innerHTML = "";
     historicalHighlightsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("histNoData"))}</div></div>`;
@@ -698,8 +836,24 @@ const renderHistorical = (historical) => {
       : `<div class="list-item"><div class="meta">${escapeHtml(t("histNoData"))}</div></div>`;
 
   const byProduct = Array.isArray(historical.byProduct) ? historical.byProduct : [];
-  const maxObs = byProduct.reduce((max, item) => Math.max(max, Number(item.observations || 0)), 1);
-  const rows = byProduct.slice(0, 8).map((item) => ({
+  const productFilter = state.historicalProductsQuery.trim().toLocaleLowerCase(locale());
+  const visibleByProduct =
+    productFilter.length === 0
+      ? byProduct
+      : byProduct.filter((item) => {
+          const productName = item.productName || item.productNameEs || item.codProduct || item.cod_product;
+          return String(productName ?? "")
+            .toLocaleLowerCase(locale())
+            .includes(productFilter);
+        });
+
+  if (visibleByProduct.length === 0) {
+    historicalProductsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
+    return;
+  }
+
+  const maxObs = visibleByProduct.reduce((max, item) => Math.max(max, Number(item.observations || 0)), 1);
+  const rows = visibleByProduct.slice(0, 8).map((item) => ({
     label: `${item.productName || item.productNameEs || item.codProduct || "-"} (${item.codProduct ?? item.cod_product ?? "-"})`,
     value: `${numberFmt.format(item.observations || 0)} ${t("histObsShort")} | ${Number(item.avg_delay ?? item.avgDelay ?? 0).toFixed(1)} ${t("minutes")}`,
     pct: ((item.observations || 0) / maxObs) * 100,
@@ -731,12 +885,15 @@ const nextStation = (nextName, nextCode, eta) => {
 };
 
 const renderTrains = (data) => {
-  if (!Array.isArray(data.items) || data.items.length === 0) {
+  state.trainsItems = Array.isArray(data.items) ? data.items : [];
+  const sortedItems = sortTrains(state.trainsItems);
+
+  if (sortedItems.length === 0) {
     trainsBodyEl.innerHTML = `<tr><td colspan="7">${escapeHtml(t("noRows"))}</td></tr>`;
     return;
   }
 
-  trainsBodyEl.innerHTML = data.items
+  trainsBodyEl.innerHTML = sortedItems
     .map((train) => {
       const delay = Number(train.ult_retraso ?? 0);
       const css = delayClass(delay);
@@ -761,6 +918,15 @@ const renderTrains = (data) => {
       `;
     })
     .join("");
+};
+
+const rerenderLocalFilteredPanels = () => {
+  if (!latestDashboard) {
+    return;
+  }
+
+  renderCorridors(Array.isArray(latestDashboard.topCorridors) ? latestDashboard.topCorridors : []);
+  renderHistorical(latestDashboard.historical ?? null);
 };
 
 const renderRaw = (payload) => {
@@ -800,8 +966,11 @@ const loadDashboard = async () => {
   const data = await readJsonResponse(response);
 
   latestDashboard = data;
+  state.lastAppliedSuccessAt = Number(data?.ingestor?.lastSuccessAt || state.lastAppliedSuccessAt || 0);
+  setPendingSync(false);
 
   renderOverviewCards(data.overview, data.today, data.typeInsights);
+  overviewCardsEl.setAttribute("aria-busy", "false");
   renderDelayBuckets(data.delayBuckets);
   renderProducts(data.byProduct);
   renderCorridors(data.topCorridors);
@@ -862,6 +1031,26 @@ const loadRawLive = async () => {
   }
 };
 
+const checkForPendingSync = async () => {
+  try {
+    const response = await fetch(buildUrl("/api/health"), {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "accept-language": state.lang,
+      },
+    });
+    const data = await readJsonResponse(response);
+    const incomingSuccessAt = Number(data?.ingestor?.lastSuccessAt || 0);
+    if (incomingSuccessAt > state.lastAppliedSuccessAt) {
+      setPendingSync(true);
+      setStatus(t("syncAvailable"), "ok");
+    }
+  } catch {
+    // noop: non-blocking polling
+  }
+};
+
 const refresh = async () => {
   try {
     await loadDashboard();
@@ -872,6 +1061,28 @@ const refresh = async () => {
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), "error");
   }
+};
+
+const refreshFirstPaint = async () => {
+  try {
+    await loadDashboard();
+    setTimeout(() => {
+      void loadTrains().catch((error) => {
+        setStatus(error instanceof Error ? error.message : String(error), "error");
+      });
+    }, 0);
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error), "error");
+  }
+};
+
+const autoRefreshTick = async () => {
+  if (isUserInactive()) {
+    await refresh();
+    return;
+  }
+
+  await checkForPendingSync();
 };
 
 const stopRawPolling = () => {
@@ -901,8 +1112,73 @@ const toggleRawPanel = () => {
   }
 };
 
+const toCsvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+
+const toExportRows = (items) => {
+  return sortTrains(items).map((train) => {
+    const delay = Number(train.ult_retraso ?? 0);
+    return {
+      train: train.cod_comercial ?? "",
+      type: train.product_name ?? "",
+      corridor: train.des_corridor ?? "",
+      route: stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino),
+      next: nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est),
+      delay,
+      last: asTime(train.last_seen_at),
+    };
+  });
+};
+
+const fetchAllFilteredTrains = async () => {
+  const items = [];
+  const limit = 200;
+  let offset = 0;
+  let total = Infinity;
+
+  while (offset < total) {
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+
+    if (state.query.trim()) {
+      params.set("q", state.query.trim());
+    }
+
+    if (state.minDelay.trim()) {
+      params.set("minDelay", state.minDelay.trim());
+    }
+
+    const response = await apiFetch(`/api/trains?${params.toString()}`);
+    const data = await readJsonResponse(response);
+    const pageItems = Array.isArray(data.items) ? data.items : [];
+    total = Number(data.total ?? pageItems.length);
+    items.push(...pageItems);
+
+    if (pageItems.length === 0) {
+      break;
+    }
+
+    offset += pageItems.length;
+  }
+
+  return items;
+};
+
+const downloadFile = (filename, mimeType, content) => {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  markUserActivity();
 
   state.query = searchInput.value;
   state.minDelay = minDelayInput.value;
@@ -912,6 +1188,7 @@ filtersForm.addEventListener("submit", (event) => {
 });
 
 langSwitchEl.addEventListener("change", () => {
+  markUserActivity();
   state.lang = langSwitchEl.value === "en" ? "en" : "es";
   localStorage.setItem("retrasometro_lang", state.lang);
   localStorage.removeItem("renfe_lang");
@@ -921,6 +1198,7 @@ langSwitchEl.addEventListener("change", () => {
 
 for (const button of historyButtons) {
   button.addEventListener("click", () => {
+    markUserActivity();
     const hours = Number(button.dataset.hours);
     if (!Number.isFinite(hours) || hours < 1) {
       return;
@@ -943,6 +1221,7 @@ for (const button of historyButtons) {
 }
 
 historyRangeApplyBtnEl.addEventListener("click", () => {
+  markUserActivity();
   state.historyFrom = historyFromInputEl.value || "";
   state.historyTo = historyToInputEl.value || "";
   localStorage.setItem("retrasometro_history_from", state.historyFrom);
@@ -955,6 +1234,7 @@ historyRangeApplyBtnEl.addEventListener("click", () => {
 });
 
 historyRangeClearBtnEl.addEventListener("click", () => {
+  markUserActivity();
   state.historyFrom = "";
   state.historyTo = "";
   localStorage.removeItem("retrasometro_history_from");
@@ -969,6 +1249,7 @@ historyRangeClearBtnEl.addEventListener("click", () => {
 });
 
 apiDocsBtnEl.addEventListener("click", () => {
+  markUserActivity();
   const docsUrl = buildUrl("/api-docs.html");
   const opened = window.open(docsUrl, "_blank", "noopener,noreferrer");
   if (!opened) {
@@ -976,17 +1257,22 @@ apiDocsBtnEl.addEventListener("click", () => {
   }
 });
 
-rawToggleBtnEl.addEventListener("click", () => {
-  toggleRawPanel();
-});
+if (rawToggleBtnEl) {
+  rawToggleBtnEl.addEventListener("click", () => {
+    markUserActivity();
+    toggleRawPanel();
+  });
+}
 
 closeRawBtnEl.addEventListener("click", () => {
+  markUserActivity();
   if (state.isRawOpen) {
     toggleRawPanel();
   }
 });
 
 copyRawBtnEl.addEventListener("click", async () => {
+  markUserActivity();
   try {
     await navigator.clipboard.writeText(buildUrl("/api/raw/live"));
     setStatus(t("rawCopyOk"), "ok");
@@ -996,6 +1282,7 @@ copyRawBtnEl.addEventListener("click", async () => {
 });
 
 recoverHistoryBtnEl.addEventListener("click", async () => {
+  markUserActivity();
   try {
     const response = await apiFetch("/api/history/recover?hours=48", { method: "POST" });
     const data = await readJsonResponse(response);
@@ -1007,20 +1294,125 @@ recoverHistoryBtnEl.addEventListener("click", async () => {
   }
 });
 
+if (syncBtnEl) {
+  syncBtnEl.addEventListener("click", async () => {
+    markUserActivity();
+    await refresh();
+  });
+}
+
+for (const button of sortButtons) {
+  button.addEventListener("click", () => {
+    markUserActivity();
+    const field = button.dataset.sort;
+    if (!field) {
+      return;
+    }
+
+    if (state.sortBy === field) {
+      state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+    } else {
+      state.sortBy = field;
+      state.sortDir = "asc";
+    }
+
+    renderSortIndicators();
+    renderTrains({ items: state.trainsItems });
+  });
+}
+
+searchInput.addEventListener("input", markUserActivity);
+minDelayInput.addEventListener("input", markUserActivity);
+
+if (corridorsSearchInputEl) {
+  corridorsSearchInputEl.addEventListener("input", () => {
+    markUserActivity();
+    state.corridorsQuery = corridorsSearchInputEl.value || "";
+    rerenderLocalFilteredPanels();
+  });
+}
+
+if (historicalProductsSearchInputEl) {
+  historicalProductsSearchInputEl.addEventListener("input", () => {
+    markUserActivity();
+    state.historicalProductsQuery = historicalProductsSearchInputEl.value || "";
+    rerenderLocalFilteredPanels();
+  });
+}
+
+if (exportCsvBtnEl) {
+  exportCsvBtnEl.addEventListener("click", async () => {
+    markUserActivity();
+    try {
+      const rows = toExportRows(await fetchAllFilteredTrains());
+      const header = [t("thTrain"), t("thType"), t("thCorridor"), t("thRoute"), t("thNext"), t("thDelay"), t("thLast")];
+      const body = rows.map((row) =>
+        [
+          toCsvCell(row.train),
+          toCsvCell(row.type),
+          toCsvCell(row.corridor),
+          toCsvCell(row.route),
+          toCsvCell(row.next),
+          toCsvCell(row.delay),
+          toCsvCell(row.last),
+        ].join(";"),
+      );
+      const csv = `\uFEFF${header.map(toCsvCell).join(";")}\n${body.join("\n")}\n`;
+      downloadFile(`trenes-activos-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.csv`, "text/csv;charset=utf-8", csv);
+      setStatus(t("exportDone"), "ok");
+    } catch (error) {
+      setStatus(`${t("exportFail")}: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  });
+}
+
+if (exportExcelBtnEl) {
+  exportExcelBtnEl.addEventListener("click", async () => {
+    markUserActivity();
+    try {
+      const rows = toExportRows(await fetchAllFilteredTrains());
+      const htmlRows = rows
+        .map(
+          (row) =>
+            `<tr><td>${escapeHtml(row.train)}</td><td>${escapeHtml(row.type)}</td><td>${escapeHtml(row.corridor)}</td><td>${escapeHtml(row.route)}</td><td>${escapeHtml(row.next)}</td><td>${escapeHtml(row.delay)}</td><td>${escapeHtml(row.last)}</td></tr>`,
+        )
+        .join("");
+      const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table border="1"><thead><tr><th>${escapeHtml(t("thTrain"))}</th><th>${escapeHtml(t("thType"))}</th><th>${escapeHtml(t("thCorridor"))}</th><th>${escapeHtml(t("thRoute"))}</th><th>${escapeHtml(t("thNext"))}</th><th>${escapeHtml(t("thDelay"))}</th><th>${escapeHtml(t("thLast"))}</th></tr></thead><tbody>${htmlRows}</tbody></table></body></html>`;
+      downloadFile(
+        `trenes-activos-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.xls`,
+        "application/vnd.ms-excel;charset=utf-8",
+        `\uFEFF${html}`,
+      );
+      setStatus(t("exportDone"), "ok");
+    } catch (error) {
+      setStatus(`${t("exportFail")}: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  });
+}
+
 const boot = async () => {
   langSwitchEl.value = state.lang;
+  localStorage.removeItem("retrasometro_history_from");
+  localStorage.removeItem("retrasometro_history_to");
+  localStorage.removeItem("renfe_history_from");
+  localStorage.removeItem("renfe_history_to");
   applyStaticTexts();
   setStatus(t("statusLoading"));
 
   try {
-    await refresh();
+    await refreshFirstPaint();
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), "error");
   }
 
+  const activityEvents = ["pointerdown", "keydown", "mousemove", "touchstart", "scroll"];
+  for (const eventName of activityEvents) {
+    window.addEventListener(eventName, markUserActivity, { passive: true });
+  }
+
   setInterval(() => {
-    void refresh();
-  }, 20_000);
+    void autoRefreshTick();
+  }, AUTO_REFRESH_MS);
 };
 
 void boot();

@@ -1,4 +1,18 @@
-@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: optional;
+  src: url("/assets/fonts/manrope-latin.woff2?v=20260414r1") format("woff2");
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: optional;
+  src: url("/assets/fonts/space-grotesk-latin.woff2?v=20260414r1") format("woff2");
+}
 
 :root {
   --bg: #f6f8fb;
@@ -64,9 +78,9 @@ body {
 
 .brand-mark {
   flex: 0 0 auto;
-  width: 54px;
-  height: 54px;
-  border-radius: 12px;
+  width: 120px;
+  height: 62px;
+  border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -76,14 +90,14 @@ body {
 .brand-mark img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
 .hero-side {
   display: grid;
   gap: 8px;
-  justify-items: end;
+  justify-items: stretch;
 }
 
 .hero-controls {
@@ -208,7 +222,12 @@ h1 {
   font-size: 0.88rem;
   background: #e7edf6;
   color: var(--muted);
+  min-height: 40px;
+  width: min(380px, 100%);
+  line-height: 1.15;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-pill.ok {
@@ -251,6 +270,24 @@ h1 {
   font-size: 1.55rem;
   font-weight: 800;
   letter-spacing: -0.02em;
+}
+
+.skeleton-card .label,
+.skeleton-card .value {
+  color: transparent;
+  background: #e9eff7;
+  border-radius: 7px;
+}
+
+.skeleton-card .label {
+  height: 14px;
+  width: 62%;
+}
+
+.skeleton-card .value {
+  margin-top: 10px;
+  height: 28px;
+  width: 85%;
 }
 
 .panel-grid {
@@ -318,6 +355,63 @@ h1 {
   display: none;
 }
 
+.skeleton-bars .bar-row span,
+.skeleton-bars .bar-row strong {
+  color: transparent;
+  background: #e9eff7;
+  border-radius: 6px;
+  min-height: 14px;
+}
+
+.skeleton-bars .bar-row .track {
+  background: #e9eff7;
+}
+
+.skeleton-bars .bar-row .fill {
+  background: #dbe6f5;
+  width: 70% !important;
+}
+
+.skeleton-list .skeleton-item .name,
+.skeleton-list .skeleton-item .meta {
+  color: transparent;
+  background: #e9eff7;
+  border-radius: 7px;
+}
+
+.skeleton-list .skeleton-item .name {
+  min-height: 16px;
+  width: 68%;
+}
+
+.skeleton-list .skeleton-item .meta {
+  min-height: 13px;
+  margin-top: 8px;
+  width: 82%;
+}
+
+.skeleton-today .today-box .label,
+.skeleton-today .today-box .value {
+  color: transparent;
+  background: #e9eff7;
+  border-radius: 7px;
+}
+
+.skeleton-today .today-box .label {
+  min-height: 13px;
+}
+
+.skeleton-today .today-box .value {
+  min-height: 22px;
+  margin-top: 10px;
+}
+
+tr.skeleton-row td {
+  height: 36px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(90deg, #ffffff 0%, #edf3fb 50%, #ffffff 100%);
+}
+
 .docs-page {
   max-width: 980px;
 }
@@ -327,8 +421,8 @@ h1 {
 }
 
 .docs-hero .brand-mark {
-  width: 48px;
-  height: 48px;
+  width: 104px;
+  height: 54px;
 }
 
 .docs-panel {
@@ -611,6 +705,23 @@ h1 {
   font-size: 0.82rem;
 }
 
+#last-seen {
+  min-width: 160px;
+  text-align: right;
+}
+
+.panel-search {
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: #fff;
+  min-width: 180px;
+}
+
 .bars,
 .list,
 .today-grid {
@@ -725,6 +836,16 @@ h1 {
   cursor: pointer;
 }
 
+.filters .ghost-btn {
+  background: #fff;
+  color: var(--ink);
+}
+
+.sync-btn {
+  border-color: #f0cb8c;
+  background: #fff5e6 !important;
+}
+
 .table-wrap {
   overflow: auto;
 }
@@ -749,6 +870,30 @@ th {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.sort-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.sort-btn:hover {
+  color: var(--ink);
+}
+
+.sort-btn.active {
+  color: var(--ink);
 }
 
 .delay {
@@ -776,6 +921,11 @@ th {
 }
 
 @media (max-width: 920px) {
+  .brand-mark {
+    width: 104px;
+    height: 54px;
+  }
+
   .hero {
     flex-direction: column;
     align-items: flex-start;
@@ -836,6 +986,10 @@ th {
 
   .bar-row {
     grid-template-columns: 110px 1fr auto;
+  }
+
+  .panel-search {
+    width: 100%;
   }
 
   .endpoint-columns {

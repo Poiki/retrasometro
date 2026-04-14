@@ -189,6 +189,25 @@ export class DB {
       CREATE INDEX IF NOT EXISTS idx_observations_batch ON train_observations(batch_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_unique ON train_observations(cod_comercial, captured_at, source);
 
+      CREATE TABLE IF NOT EXISTS train_hourly_train_stats (
+        hour_epoch INTEGER NOT NULL,
+        cod_comercial TEXT NOT NULL,
+        cod_product INTEGER NOT NULL,
+        des_corridor TEXT,
+        observations INTEGER NOT NULL DEFAULT 0,
+        on_time_count INTEGER NOT NULL DEFAULT 0,
+        delayed_over_15_count INTEGER NOT NULL DEFAULT 0,
+        severe_count INTEGER NOT NULL DEFAULT 0,
+        accessible_count INTEGER NOT NULL DEFAULT 0,
+        sum_delay REAL NOT NULL DEFAULT 0,
+        sum_positive_delay INTEGER NOT NULL DEFAULT 0,
+        max_delay INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (hour_epoch, cod_comercial)
+      );
+      CREATE INDEX IF NOT EXISTS idx_hourly_time ON train_hourly_train_stats(hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_hourly_product_time ON train_hourly_train_stats(cod_product, hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_hourly_corridor_time ON train_hourly_train_stats(des_corridor, hour_epoch DESC);
+
       CREATE TABLE IF NOT EXISTS train_daily_stats (
         day TEXT NOT NULL,
         cod_comercial TEXT NOT NULL,
@@ -549,6 +568,57 @@ export class DB {
       );
   }
 
+  upsertHourlyTrainStats(train: NormalizedTrain, capturedAtEpoch: number) {
+    const hourEpoch = Math.floor(capturedAtEpoch / 3600) * 3600;
+    const delay = train.ultRetraso;
+
+    this.db
+      .query(
+        `
+      INSERT INTO train_hourly_train_stats (
+        hour_epoch,
+        cod_comercial,
+        cod_product,
+        des_corridor,
+        observations,
+        on_time_count,
+        delayed_over_15_count,
+        severe_count,
+        accessible_count,
+        sum_delay,
+        sum_positive_delay,
+        max_delay
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(hour_epoch, cod_comercial) DO UPDATE SET
+        cod_product = excluded.cod_product,
+        des_corridor = excluded.des_corridor,
+        observations = train_hourly_train_stats.observations + excluded.observations,
+        on_time_count = train_hourly_train_stats.on_time_count + excluded.on_time_count,
+        delayed_over_15_count =
+          train_hourly_train_stats.delayed_over_15_count + excluded.delayed_over_15_count,
+        severe_count = train_hourly_train_stats.severe_count + excluded.severe_count,
+        accessible_count = train_hourly_train_stats.accessible_count + excluded.accessible_count,
+        sum_delay = train_hourly_train_stats.sum_delay + excluded.sum_delay,
+        sum_positive_delay = train_hourly_train_stats.sum_positive_delay + excluded.sum_positive_delay,
+        max_delay = MAX(train_hourly_train_stats.max_delay, excluded.max_delay)
+      `,
+      )
+      .run(
+        hourEpoch,
+        train.codComercial,
+        train.codProduct,
+        train.desCorridor,
+        1,
+        delay === 0 ? 1 : 0,
+        delay > 15 ? 1 : 0,
+        delay > 60 ? 1 : 0,
+        train.accesible === 1 ? 1 : 0,
+        delay,
+        Math.max(0, delay),
+        delay,
+      );
+  }
+
   upsertStations(stations: StationRecord[], updatedAt: number) {
     const run = this.db.transaction((items: StationRecord[]) => {
       const query = this.db.query(
@@ -601,6 +671,60 @@ export class DB {
     run(stations);
   }
 
+  bootstrapHourlyStatsFromObservations(sinceEpoch: number): number {
+    const sinceHour = Math.floor(sinceEpoch / 3600) * 3600;
+
+    const result = this.db
+      .query(
+        `
+      INSERT INTO train_hourly_train_stats (
+        hour_epoch,
+        cod_comercial,
+        cod_product,
+        des_corridor,
+        observations,
+        on_time_count,
+        delayed_over_15_count,
+        severe_count,
+        accessible_count,
+        sum_delay,
+        sum_positive_delay,
+        max_delay
+      )
+      SELECT
+        CAST((captured_at / 3600) AS INTEGER) * 3600 AS hour_epoch,
+        cod_comercial,
+        MAX(cod_product) AS cod_product,
+        MAX(des_corridor) AS des_corridor,
+        COUNT(*) AS observations,
+        SUM(CASE WHEN ult_retraso = 0 THEN 1 ELSE 0 END) AS on_time_count,
+        SUM(CASE WHEN ult_retraso > 15 THEN 1 ELSE 0 END) AS delayed_over_15_count,
+        SUM(CASE WHEN ult_retraso > 60 THEN 1 ELSE 0 END) AS severe_count,
+        SUM(CASE WHEN accesible = 1 THEN 1 ELSE 0 END) AS accessible_count,
+        SUM(ult_retraso) AS sum_delay,
+        SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END) AS sum_positive_delay,
+        MAX(ult_retraso) AS max_delay
+      FROM train_observations
+      WHERE captured_at >= ?
+      GROUP BY hour_epoch, cod_comercial
+      ON CONFLICT(hour_epoch, cod_comercial) DO UPDATE SET
+        cod_product = excluded.cod_product,
+        des_corridor = excluded.des_corridor,
+        observations = excluded.observations,
+        on_time_count = excluded.on_time_count,
+        delayed_over_15_count = excluded.delayed_over_15_count,
+        severe_count = excluded.severe_count,
+        accessible_count = excluded.accessible_count,
+        sum_delay = excluded.sum_delay,
+        sum_positive_delay = excluded.sum_positive_delay,
+        max_delay = excluded.max_delay
+      `,
+      )
+      .run(sinceHour);
+
+    return result.changes;
+  }
+
   deleteStaleCurrentTrains(cutoffEpoch: number): number {
     const result = this.db
       .query(`DELETE FROM trains_current WHERE last_seen_at < ?`)
@@ -621,6 +745,15 @@ export class DB {
     const result = this.db
       .query(`DELETE FROM train_observations WHERE captured_at < ?`)
       .run(cutoffEpoch);
+
+    return result.changes;
+  }
+
+  cleanupHourlyStats(cutoffEpoch: number): number {
+    const hourCutoff = Math.floor(cutoffEpoch / 3600) * 3600;
+    const result = this.db
+      .query(`DELETE FROM train_hourly_train_stats WHERE hour_epoch < ?`)
+      .run(hourCutoff);
 
     return result.changes;
   }
@@ -1156,13 +1289,13 @@ export class DB {
         `
       SELECT
         cod_product,
-        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
-        COUNT(*) AS observations,
+        CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes,
+        COALESCE(SUM(observations), 0) AS observations,
         COUNT(DISTINCT cod_comercial) AS affected_trains
-      FROM train_observations
-      WHERE captured_at >= ?
+      FROM train_hourly_train_stats
+      WHERE hour_epoch >= ?
       GROUP BY cod_product
-      ORDER BY COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC, observations DESC
+      ORDER BY COALESCE(SUM(sum_positive_delay), 0) DESC, observations DESC
       LIMIT 1
       `,
       )
@@ -1221,7 +1354,12 @@ export class DB {
     const safeHours = Math.max(24, Math.min(24 * 30, Math.trunc(hours)));
     const since = now - safeHours * 3600;
 
-    return this.getHistoricalStatsByRange(since, now);
+    const hourlyBootstrapReady = this.getState("hourly_bootstrap_last_30d_v1");
+    if (!hourlyBootstrapReady) {
+      return this.getHistoricalStatsByObservationRange(since, now);
+    }
+
+    return this.getHistoricalStatsByHourlyRange(since, now);
   }
 
   getHistoricalStatsCustom(sinceEpoch: number, untilEpoch: number) {
@@ -1229,10 +1367,273 @@ export class DB {
     const safeSince = Math.max(0, Math.min(sinceEpoch, untilEpoch));
     const safeUntil = Math.max(safeSince + 1, Math.min(untilEpoch, now));
 
-    return this.getHistoricalStatsByRange(safeSince, safeUntil);
+    return this.getHistoricalStatsByObservationRange(safeSince, safeUntil);
   }
 
-  private getHistoricalStatsByRange(since: number, until: number) {
+  private getHistoricalStatsByHourlyRange(since: number, until: number) {
+    const safeHours = Math.max(1, Math.round((until - since) / 3600));
+    const startHour = Math.floor(since / 3600) * 3600;
+    const endHour = Math.floor(until / 3600) * 3600;
+    const fullFromHour = startHour + 3600;
+    const fullToHour = endHour - 3600;
+    const firstEdgeFrom = since;
+    const firstEdgeTo = Math.min(until, startHour + 3599);
+    const hasSecondEdge = endHour !== startHour && until >= endHour;
+    const secondEdgeFrom = hasSecondEdge ? endHour : -1;
+    const secondEdgeTo = hasSecondEdge ? until : -2;
+    const rangeParams = [
+      fullFromHour,
+      fullToHour,
+      firstEdgeFrom,
+      firstEdgeTo,
+      secondEdgeFrom,
+      secondEdgeTo,
+    ];
+    const sinceDay = new Date(since * 1000).toISOString().slice(0, 10);
+    const untilDay = new Date(until * 1000).toISOString().slice(0, 10);
+
+    const rangeRowsCte = `
+      WITH range_rows AS (
+        SELECT
+          hour_epoch,
+          cod_comercial,
+          cod_product,
+          des_corridor,
+          observations,
+          on_time_count,
+          delayed_over_15_count,
+          severe_count,
+          accessible_count,
+          sum_delay,
+          sum_positive_delay,
+          max_delay
+        FROM train_hourly_train_stats
+        WHERE hour_epoch >= ? AND hour_epoch <= ?
+
+        UNION ALL
+
+        SELECT
+          CAST((captured_at / 3600) AS INTEGER) * 3600 AS hour_epoch,
+          cod_comercial,
+          MAX(cod_product) AS cod_product,
+          MAX(des_corridor) AS des_corridor,
+          COUNT(*) AS observations,
+          SUM(CASE WHEN ult_retraso = 0 THEN 1 ELSE 0 END) AS on_time_count,
+          SUM(CASE WHEN ult_retraso > 15 THEN 1 ELSE 0 END) AS delayed_over_15_count,
+          SUM(CASE WHEN ult_retraso > 60 THEN 1 ELSE 0 END) AS severe_count,
+          SUM(CASE WHEN accesible = 1 THEN 1 ELSE 0 END) AS accessible_count,
+          SUM(ult_retraso) AS sum_delay,
+          SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END) AS sum_positive_delay,
+          MAX(ult_retraso) AS max_delay
+        FROM train_observations
+        WHERE (captured_at >= ? AND captured_at <= ?)
+          OR (captured_at >= ? AND captured_at <= ?)
+        GROUP BY hour_epoch, cod_comercial
+      )
+    `;
+
+    const summaryRow = this.db
+      .query(
+        `
+      ${rangeRowsCte}
+      SELECT
+        COALESCE(SUM(observations), 0) AS observations,
+        COUNT(DISTINCT cod_comercial) AS unique_trains,
+        COALESCE(ROUND(SUM(sum_delay) / NULLIF(SUM(observations), 0), 2), 0) AS avg_delay,
+        COALESCE(MAX(max_delay), 0) AS max_delay,
+        COALESCE(SUM(on_time_count), 0) AS on_time_count,
+        COALESCE(SUM(delayed_over_15_count), 0) AS delayed_over_15_count,
+        COALESCE(SUM(severe_count), 0) AS severe_count,
+        COALESCE(SUM(accessible_count), 0) AS accessible_count,
+        CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes,
+        MIN(hour_epoch) AS min_ts,
+        MAX(hour_epoch) AS max_ts
+      FROM range_rows
+      `,
+      )
+      .get(...rangeParams) as
+      | {
+          observations: number;
+          unique_trains: number;
+          avg_delay: number;
+          max_delay: number;
+          on_time_count: number;
+          delayed_over_15_count: number;
+          severe_count: number;
+          accessible_count: number;
+          accumulated_delay_minutes: string;
+          min_ts: number | null;
+          max_ts: number | null;
+        }
+      | undefined;
+
+    const observationCount = summaryRow?.observations ?? 0;
+    const pct = (count: number) =>
+      observationCount > 0 ? Number(((count / observationCount) * 100).toFixed(1)) : 0;
+
+    const topProblematicProduct = this.db
+      .query(
+        `
+      ${rangeRowsCte}
+      SELECT
+        cod_product,
+        CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes,
+        COALESCE(ROUND(SUM(sum_delay) / NULLIF(SUM(observations), 0), 2), 0) AS avg_delay,
+        COALESCE(MAX(max_delay), 0) AS max_delay,
+        COALESCE(SUM(observations), 0) AS observations,
+        COUNT(DISTINCT cod_comercial) AS trains
+      FROM range_rows
+      GROUP BY cod_product
+      ORDER BY COALESCE(SUM(sum_positive_delay), 0) DESC, observations DESC
+      LIMIT 1
+      `,
+      )
+      .get(...rangeParams) as
+      | {
+          cod_product: number;
+          accumulated_delay_minutes: string;
+          avg_delay: number;
+          max_delay: number;
+          observations: number;
+          trains: number;
+        }
+      | undefined;
+
+    const topProblematicCorridor = this.db
+      .query(
+        `
+      ${rangeRowsCte}
+      SELECT
+        COALESCE(des_corridor, 'Sin corredor') AS corridor,
+        CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes,
+        COALESCE(ROUND(SUM(sum_delay) / NULLIF(SUM(observations), 0), 2), 0) AS avg_delay,
+        COALESCE(MAX(max_delay), 0) AS max_delay,
+        COALESCE(SUM(observations), 0) AS observations,
+        COUNT(DISTINCT cod_comercial) AS trains
+      FROM range_rows
+      GROUP BY des_corridor
+      ORDER BY COALESCE(SUM(sum_positive_delay), 0) DESC, observations DESC
+      LIMIT 1
+      `,
+      )
+      .get(...rangeParams) as
+      | {
+          corridor: string;
+          accumulated_delay_minutes: string;
+          avg_delay: number;
+          max_delay: number;
+          observations: number;
+          trains: number;
+        }
+      | undefined;
+
+    const byProduct = this.db
+      .query(
+        `
+      ${rangeRowsCte}
+      SELECT
+        cod_product,
+        COALESCE(SUM(observations), 0) AS observations,
+        COUNT(DISTINCT cod_comercial) AS trains,
+        COALESCE(ROUND(SUM(sum_delay) / NULLIF(SUM(observations), 0), 2), 0) AS avg_delay,
+        COALESCE(MAX(max_delay), 0) AS max_delay,
+        CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes
+      FROM range_rows
+      GROUP BY cod_product
+      ORDER BY observations DESC, COALESCE(SUM(sum_positive_delay), 0) DESC
+      LIMIT 10
+      `,
+      )
+      .all(...rangeParams);
+
+    const dailyTrend = this.db
+      .query(
+        `
+      SELECT
+        day,
+        COALESCE(SUM(observations), 0) AS observations,
+        COALESCE(ROUND(SUM(avg_delay * observations) / NULLIF(SUM(observations), 0), 2), 0) AS weighted_avg_delay,
+        COALESCE(MAX(max_delay), 0) AS peak_delay,
+        COALESCE(ROUND(SUM(total_distance_km), 2), 0) AS km_tracked
+      FROM train_daily_stats
+      WHERE day >= ? AND day <= ?
+      GROUP BY day
+      ORDER BY day ASC
+      `,
+      )
+      .all(sinceDay, untilDay);
+
+    const ingestion = this.db
+      .query(
+        `
+      SELECT
+        COUNT(*) AS batches,
+        COALESCE(ROUND(AVG(train_count), 2), 0) AS avg_trains_per_batch,
+        COALESCE(ROUND(MIN(train_count), 2), 0) AS min_trains_per_batch,
+        COALESCE(ROUND(MAX(train_count), 2), 0) AS max_trains_per_batch
+      FROM ingestion_batches
+      WHERE fetched_at >= ? AND fetched_at <= ?
+      `,
+      )
+      .get(since, until) as
+      | {
+          batches: number;
+          avg_trains_per_batch: number;
+          min_trains_per_batch: number;
+          max_trains_per_batch: number;
+        }
+      | undefined;
+
+    return {
+      hours: safeHours,
+      sinceEpoch: since,
+      untilEpoch: until,
+      nowEpoch: until,
+      summary: {
+        observations: observationCount,
+        uniqueTrains: summaryRow?.unique_trains ?? 0,
+        avgDelay: summaryRow?.avg_delay ?? 0,
+        maxDelay: summaryRow?.max_delay ?? 0,
+        accumulatedDelayMinutes: summaryRow?.accumulated_delay_minutes ?? "0",
+        onTimePct: pct(summaryRow?.on_time_count ?? 0),
+        delayedOver15Pct: pct(summaryRow?.delayed_over_15_count ?? 0),
+        severePct: pct(summaryRow?.severe_count ?? 0),
+        accessiblePct: pct(summaryRow?.accessible_count ?? 0),
+        minTs: summaryRow?.min_ts ?? null,
+        maxTs: summaryRow?.max_ts ?? null,
+      },
+      topProblematicProduct: topProblematicProduct
+        ? {
+            codProduct: topProblematicProduct.cod_product,
+            accumulatedDelayMinutes: topProblematicProduct.accumulated_delay_minutes,
+            avgDelay: topProblematicProduct.avg_delay,
+            maxDelay: topProblematicProduct.max_delay,
+            observations: topProblematicProduct.observations,
+            trains: topProblematicProduct.trains,
+          }
+        : null,
+      topProblematicCorridor: topProblematicCorridor
+        ? {
+            corridor: topProblematicCorridor.corridor,
+            accumulatedDelayMinutes: topProblematicCorridor.accumulated_delay_minutes,
+            avgDelay: topProblematicCorridor.avg_delay,
+            maxDelay: topProblematicCorridor.max_delay,
+            observations: topProblematicCorridor.observations,
+            trains: topProblematicCorridor.trains,
+          }
+        : null,
+      byProduct,
+      dailyTrend,
+      ingestion: {
+        batches: ingestion?.batches ?? 0,
+        avgTrainsPerBatch: ingestion?.avg_trains_per_batch ?? 0,
+        minTrainsPerBatch: ingestion?.min_trains_per_batch ?? 0,
+        maxTrainsPerBatch: ingestion?.max_trains_per_batch ?? 0,
+      },
+    };
+  }
+
+  private getHistoricalStatsByObservationRange(since: number, until: number) {
     const safeHours = Math.max(1, Math.round((until - since) / 3600));
     const sinceDay = new Date(since * 1000).toISOString().slice(0, 10);
     const untilDay = new Date(until * 1000).toISOString().slice(0, 10);

@@ -3,10 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Panel en tiempo real de retrasos ferroviarios con histórico de 24h, 7d y 30d."
+    />
     <title>retrasometro</title>
-    <link rel="icon" type="image/webp" href="/assets/logos/favicons/icon.webp" />
-    <link rel="icon" type="image/x-icon" href="/assets/logos/favicons/icon.ico" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" type="image/webp" href="/assets/logos/favicons/icon.webp?v=20260414r1" />
+    <link rel="icon" type="image/x-icon" href="/assets/logos/favicons/icon.ico?v=20260414r1" />
+    <link
+      rel="preload"
+      href="/assets/fonts/manrope-latin.woff2?v=20260414r1"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/assets/fonts/space-grotesk-latin.woff2?v=20260414r1"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/styles.css?v=20260414r2"
+      as="style"
+      onload="this.onload=null;this.rel='stylesheet'"
+    />
+    <noscript><link rel="stylesheet" href="/styles.css?v=20260414r2" /></noscript>
   </head>
   <body>
     <div class="bg-grid"></div>
@@ -14,8 +38,15 @@
       <header class="hero">
         <div class="hero-brand">
           <picture class="brand-mark">
-            <source srcset="/assets/logos/primary/logo.webp" type="image/webp" />
-            <img src="/assets/logos/primary/logo.jpg" alt="Logo de retrasometro" />
+            <source srcset="/assets/logos/primary/logo-120.webp?v=20260414r2" type="image/webp" />
+            <img
+              src="/assets/logos/primary/logo-120.jpg?v=20260414r2"
+              alt="Logo de retrasometro"
+              width="120"
+              height="62"
+              decoding="async"
+              fetchpriority="high"
+            />
           </picture>
           <div>
             <h1 id="title-text">Retrasos ferroviarios en tiempo real</h1>
@@ -32,7 +63,6 @@
               </select>
             </label>
             <button id="api-docs-btn" class="ghost-btn" type="button">API</button>
-            <button id="raw-toggle-btn" class="ghost-btn" type="button">Datos en bruto</button>
           </div>
           <div class="status-pill" id="status-pill">Cargando...</div>
         </div>
@@ -51,7 +81,18 @@
         <pre id="raw-json" class="raw-json">{ }</pre>
       </section>
 
-      <section class="cards" id="overview-cards"></section>
+      <section class="cards" id="overview-cards" aria-busy="true">
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+      </section>
 
       <section class="panel historical-panel">
         <div class="panel-header wrap">
@@ -63,7 +104,7 @@
           </div>
         </div>
 
-        <div class="history-range">
+        <div class="history-range hidden">
           <label id="history-from-label" for="history-from">Desde</label>
           <input id="history-from" type="datetime-local" />
           <label id="history-to-label" for="history-to">Hasta</label>
@@ -72,21 +113,44 @@
           <button id="history-range-clear" class="ghost-btn" type="button">Limpiar</button>
         </div>
 
-        <div class="cards" id="historical-cards"></div>
+        <div class="cards" id="historical-cards">
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+          <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+        </div>
 
         <div class="inside-grid">
           <div class="subpanel">
             <div class="panel-header">
               <h3 id="historical-highlights-title">Hallazgos del período</h3>
             </div>
-            <div id="historical-highlights" class="list"></div>
+            <div id="historical-highlights" class="list skeleton-list">
+              <div class="list-item skeleton-item"><div class="name"></div><div class="meta"></div></div>
+              <div class="list-item skeleton-item"><div class="name"></div><div class="meta"></div></div>
+            </div>
           </div>
 
           <div class="subpanel">
             <div class="panel-header">
               <h3 id="historical-products-title">Distribución histórica por tipo</h3>
+              <input
+                id="historical-products-search"
+                class="panel-search"
+                type="search"
+                placeholder="Filtrar tipos"
+                autocomplete="off"
+              />
             </div>
-            <div id="historical-products" class="bars"></div>
+            <div id="historical-products" class="bars skeleton-bars">
+              <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+              <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+              <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+            </div>
           </div>
         </div>
       </section>
@@ -97,14 +161,22 @@
             <h2 id="delay-title">Distribución de retrasos</h2>
             <span id="last-seen">-</span>
           </div>
-          <div id="delay-buckets" class="bars"></div>
+          <div id="delay-buckets" class="bars skeleton-bars">
+            <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+            <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+            <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+          </div>
         </article>
 
         <article class="panel">
           <div class="panel-header">
             <h2 id="products-title">Tipos de tren activos</h2>
           </div>
-          <div id="products" class="bars"></div>
+          <div id="products" class="bars skeleton-bars">
+            <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+            <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+            <div class="bar-row"><span></span><div class="track"><div class="fill"></div></div><strong></strong></div>
+          </div>
         </article>
       </section>
 
@@ -112,15 +184,32 @@
         <article class="panel">
           <div class="panel-header">
             <h2 id="corridors-title">Corredores con más tráfico</h2>
+            <input
+              id="corridors-search"
+              class="panel-search"
+              type="search"
+              placeholder="Filtrar corredores"
+              autocomplete="off"
+            />
           </div>
-          <div id="corridors" class="list"></div>
+          <div id="corridors" class="list skeleton-list">
+            <div class="list-item skeleton-item"><div class="name"></div><div class="meta"></div></div>
+            <div class="list-item skeleton-item"><div class="name"></div><div class="meta"></div></div>
+          </div>
         </article>
 
         <article class="panel">
           <div class="panel-header">
             <h2 id="today-title">Acumulado del día</h2>
           </div>
-          <div id="today-metrics" class="today-grid"></div>
+          <div id="today-metrics" class="today-grid skeleton-today">
+            <div class="today-box"><div class="label"></div><div class="value"></div></div>
+            <div class="today-box"><div class="label"></div><div class="value"></div></div>
+            <div class="today-box"><div class="label"></div><div class="value"></div></div>
+            <div class="today-box"><div class="label"></div><div class="value"></div></div>
+            <div class="today-box"><div class="label"></div><div class="value"></div></div>
+            <div class="today-box"><div class="label"></div><div class="value"></div></div>
+          </div>
         </article>
       </section>
 
@@ -131,46 +220,132 @@
             <input id="search" type="search" placeholder="Buscar por tren, corredor o estación" />
             <input id="min-delay" type="number" min="0" step="1" placeholder="Min retraso" />
             <button id="apply-btn" type="submit">Aplicar</button>
+            <button id="sync-btn" class="ghost-btn hidden sync-btn" type="button">Sincronizar</button>
+            <button id="export-csv-btn" class="ghost-btn" type="button">Exportar CSV</button>
+            <button id="export-excel-btn" class="ghost-btn" type="button">Exportar Excel</button>
           </form>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th id="th-train">Tren</th>
-                <th id="th-type">Tipo</th>
-                <th id="th-corridor">Corredor</th>
-                <th id="th-route">Origen -> Destino</th>
-                <th id="th-next">Prox. estación</th>
-                <th id="th-delay">Retraso</th>
-                <th id="th-last">Última señal</th>
+                <th>
+                  <button class="sort-btn" id="sort-train" data-sort="train" type="button">
+                    <span id="th-train">Tren</span><span id="sort-indicator-train">↕</span>
+                  </button>
+                </th>
+                <th>
+                  <button class="sort-btn" id="sort-type" data-sort="type" type="button">
+                    <span id="th-type">Tipo</span><span id="sort-indicator-type">↕</span>
+                  </button>
+                </th>
+                <th>
+                  <button class="sort-btn" id="sort-corridor" data-sort="corridor" type="button">
+                    <span id="th-corridor">Corredor</span><span id="sort-indicator-corridor">↕</span>
+                  </button>
+                </th>
+                <th>
+                  <button class="sort-btn" id="sort-route" data-sort="route" type="button">
+                    <span id="th-route">Origen -> Destino</span><span id="sort-indicator-route">↕</span>
+                  </button>
+                </th>
+                <th>
+                  <button class="sort-btn" id="sort-next" data-sort="next" type="button">
+                    <span id="th-next">Prox. estación</span><span id="sort-indicator-next">↕</span>
+                  </button>
+                </th>
+                <th>
+                  <button class="sort-btn" id="sort-delay" data-sort="delay" type="button">
+                    <span id="th-delay">Retraso</span><span id="sort-indicator-delay">↕</span>
+                  </button>
+                </th>
+                <th>
+                  <button class="sort-btn" id="sort-last" data-sort="last" type="button">
+                    <span id="th-last">Última señal</span><span id="sort-indicator-last">↕</span>
+                  </button>
+                </th>
               </tr>
             </thead>
-            <tbody id="trains-body"></tbody>
+            <tbody id="trains-body">
+              <tr class="skeleton-row">
+                <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+              </tr>
+              <tr class="skeleton-row">
+                <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+              </tr>
+              <tr class="skeleton-row">
+                <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+              </tr>
+            </tbody>
           </table>
         </div>
       </section>
     </main>
 
-    <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>
     <script>
-      (function initKofiWidget() {
+      (function initDeferredKofiWidget() {
         const storedLang = localStorage.getItem("retrasometro_lang") ?? localStorage.getItem("renfe_lang");
         const browserLang = (navigator.language || "").toLowerCase();
         const lang = storedLang === "en" ? "en" : storedLang === "es" ? "es" : browserLang.startsWith("en") ? "en" : "es";
         const buttonText = lang === "en" ? "Support me" : "Apóyame";
+        let loaded = false;
 
-        if (window.kofiWidgetOverlay && typeof window.kofiWidgetOverlay.draw === "function") {
-          window.kofiWidgetOverlay.draw("mrpoiki", {
-            type: "floating-chat",
-            "floating-chat.position": "left",
-            "floating-chat.donateButton.text": buttonText,
-            "floating-chat.donateButton.background-color": "#323842",
-            "floating-chat.donateButton.text-color": "#fff",
-          });
-        }
+        const initWidget = () => {
+          if (window.kofiWidgetOverlay && typeof window.kofiWidgetOverlay.draw === "function") {
+            window.kofiWidgetOverlay.draw("mrpoiki", {
+              type: "floating-chat",
+              "floating-chat.position": "left",
+              "floating-chat.donateButton.text": buttonText,
+              "floating-chat.donateButton.background-color": "#323842",
+              "floating-chat.donateButton.text-color": "#fff",
+            });
+          }
+        };
+
+        const loadWidgetScript = () => {
+          if (loaded) {
+            return;
+          }
+          loaded = true;
+          const script = document.createElement("script");
+          script.src = "https://storage.ko-fi.com/cdn/scripts/overlay-widget.js";
+          script.async = true;
+          script.onload = initWidget;
+          document.head.append(script);
+        };
+
+        const scheduleLoad = () => {
+          if ("requestIdleCallback" in window) {
+            window.requestIdleCallback(loadWidgetScript, { timeout: 25000 });
+          } else {
+            setTimeout(loadWidgetScript, 12000);
+          }
+        };
+
+        const interactionEvents = ["pointerdown", "keydown", "touchstart"];
+        const onInteraction = () => {
+          scheduleLoad();
+          for (const eventName of interactionEvents) {
+            window.removeEventListener(eventName, onInteraction, { capture: true });
+          }
+        };
+
+        window.addEventListener(
+          "load",
+          () => {
+            for (const eventName of interactionEvents) {
+              window.addEventListener(eventName, onInteraction, {
+                passive: true,
+                once: true,
+                capture: true,
+              });
+            }
+            setTimeout(scheduleLoad, 30000);
+          },
+          { once: true },
+        );
       })();
     </script>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=20260414r3"></script>
   </body>
 </html>

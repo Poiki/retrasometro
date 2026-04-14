@@ -2,6 +2,7 @@ import { join, normalize, extname } from "node:path";
 import { config } from "./config";
 import { DB } from "./db";
 import { RenfeIngestor } from "./ingestor";
+import { DashboardPresetCache } from "./dashboard-cache";
 import { ApiKeyManager } from "./auth";
 import { getProductName, getProductNames, type AppLanguage } from "./products";
 import { resolveLanguage, t } from "./i18n";
@@ -130,7 +131,11 @@ const isProtectedPath = (pathname: string): boolean => {
   return false;
 };
 
-export const startServer = (db: DB, ingestor: RenfeIngestor) => {
+export const startServer = (
+  db: DB,
+  ingestor: RenfeIngestor,
+  dashboardPresetCache: DashboardPresetCache,
+) => {
   const apiKeyManager = new ApiKeyManager();
 
   const server = Bun.serve({
@@ -139,7 +144,7 @@ export const startServer = (db: DB, ingestor: RenfeIngestor) => {
       const url = new URL(request.url);
 
       if (url.pathname.startsWith("/api/")) {
-        return handleApi(request, url, db, ingestor, apiKeyManager);
+        return handleApi(request, url, db, ingestor, dashboardPresetCache, apiKeyManager);
       }
 
       return serveStatic(url.pathname);
@@ -155,6 +160,7 @@ const handleApi = async (
   url: URL,
   db: DB,
   ingestor: RenfeIngestor,
+  dashboardPresetCache: DashboardPresetCache,
   apiKeyManager: ApiKeyManager,
 ): Promise<Response> => {
   const lang = resolveLanguage(url, request);
@@ -224,6 +230,13 @@ const handleApi = async (
         ok: true,
         language: lang,
         generatedAt: new Date().toISOString(),
+        cacheMeta: {
+          source: "cache",
+          windowHours: 24,
+          generatedAt: new Date().toISOString(),
+          ageSeconds: 12,
+          customRange: false,
+        },
         overview: {
           ...sampleOverview,
           lastSeenAtIso: toIso(sampleOverview.lastSeenAt),
@@ -621,7 +634,14 @@ const handleApi = async (
     }
 
     try {
-      return await handleProtectedApi(request, url, db, ingestor, lang);
+      return await handleProtectedApi(
+        request,
+        url,
+        db,
+        ingestor,
+        dashboardPresetCache,
+        lang,
+      );
     } finally {
       lock.release();
     }
@@ -635,6 +655,7 @@ const handleProtectedApi = async (
   url: URL,
   db: DB,
   ingestor: RenfeIngestor,
+  dashboardPresetCache: DashboardPresetCache,
   lang: AppLanguage,
 ): Promise<Response> => {
   if (url.pathname === "/api/dashboard") {
@@ -662,12 +683,60 @@ const handleProtectedApi = async (
 
     const topCorridors = db.getTopCorridors(8);
     const typeInsights = db.getTodayTypeInsights();
-    const historicalRaw = hasCustomRange
-      ? db.getHistoricalStatsCustom(
-          rawFrom ?? Math.max(0, (rawTo ?? nowEpoch) - historyHours * 3600),
-          rawTo ?? nowEpoch,
-        )
-      : db.getHistoricalStats(historyHours);
+    let historicalRaw;
+    let cacheMeta: {
+      source: "cache" | "live";
+      windowHours: number;
+      generatedAt: string;
+      ageSeconds: number;
+      customRange: boolean;
+    };
+
+    if (hasCustomRange) {
+      historicalRaw = db.getHistoricalStatsCustom(
+        rawFrom ?? Math.max(0, (rawTo ?? nowEpoch) - historyHours * 3600),
+        rawTo ?? nowEpoch,
+      );
+      cacheMeta = {
+        source: "live",
+        windowHours: historyHours,
+        generatedAt: new Date(nowEpoch * 1000).toISOString(),
+        ageSeconds: 0,
+        customRange: true,
+      };
+    } else if (dashboardPresetCache.isPresetHours(historyHours)) {
+      const cached = await dashboardPresetCache.read(historyHours);
+      if (cached) {
+        historicalRaw = cached.historical;
+        cacheMeta = {
+          source: "cache",
+          windowHours: historyHours,
+          generatedAt: cached.generatedAt,
+          ageSeconds: Math.max(0, nowEpoch - cached.generatedAtEpoch),
+          customRange: false,
+        };
+      } else {
+        historicalRaw = db.getHistoricalStats(historyHours);
+        await dashboardPresetCache.generate(historyHours, nowEpoch);
+        cacheMeta = {
+          source: "live",
+          windowHours: historyHours,
+          generatedAt: new Date(nowEpoch * 1000).toISOString(),
+          ageSeconds: 0,
+          customRange: false,
+        };
+      }
+    } else {
+      historicalRaw = db.getHistoricalStats(historyHours);
+      cacheMeta = {
+        source: "live",
+        windowHours: historyHours,
+        generatedAt: new Date(nowEpoch * 1000).toISOString(),
+        ageSeconds: 0,
+        customRange: false,
+      };
+    }
+
     const historicalByProduct = (historicalRaw.byProduct as Array<{ cod_product: number }>).map(
       (item) => {
         const names = getProductNames(item.cod_product);
@@ -691,6 +760,7 @@ const handleProtectedApi = async (
       ok: true,
       language: lang,
       generatedAt: new Date().toISOString(),
+      cacheMeta,
       overview: {
         ...overview,
         lastSeenAtIso: toIso(overview.lastSeenAt),
@@ -910,10 +980,13 @@ const serveStatic = async (pathname: string): Promise<Response> => {
   const file = Bun.file(absolutePath);
 
   if (await file.exists()) {
+    const extension = extname(absolutePath).toLowerCase();
+    const cacheControl =
+      extension === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
+
     return new Response(file, {
       headers: {
-        "cache-control":
-          extname(absolutePath) === ".html" ? "no-cache" : "public, max-age=300",
+        "cache-control": cacheControl,
       },
     });
   }

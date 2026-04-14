@@ -133,6 +133,22 @@ const createSchema = async (client: Client) => {
       CONSTRAINT uq_observations UNIQUE(cod_comercial, captured_at, source)
     );
 
+    CREATE TABLE IF NOT EXISTS train_hourly_train_stats (
+      hour_epoch BIGINT NOT NULL,
+      cod_comercial TEXT NOT NULL,
+      cod_product INTEGER NOT NULL,
+      des_corridor TEXT,
+      observations INTEGER NOT NULL DEFAULT 0,
+      on_time_count INTEGER NOT NULL DEFAULT 0,
+      delayed_over_15_count INTEGER NOT NULL DEFAULT 0,
+      severe_count INTEGER NOT NULL DEFAULT 0,
+      accessible_count INTEGER NOT NULL DEFAULT 0,
+      sum_delay DOUBLE PRECISION NOT NULL DEFAULT 0,
+      sum_positive_delay INTEGER NOT NULL DEFAULT 0,
+      max_delay INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(hour_epoch, cod_comercial)
+    );
+
     CREATE TABLE IF NOT EXISTS train_daily_stats (
       day TEXT NOT NULL,
       cod_comercial TEXT NOT NULL,
@@ -165,6 +181,9 @@ const createSchema = async (client: Client) => {
     CREATE INDEX IF NOT EXISTS idx_observations_train_time ON train_observations(cod_comercial, captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_observations_time ON train_observations(captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_observations_batch ON train_observations(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_hourly_time ON train_hourly_train_stats(hour_epoch DESC);
+    CREATE INDEX IF NOT EXISTS idx_hourly_product_time ON train_hourly_train_stats(cod_product, hour_epoch DESC);
+    CREATE INDEX IF NOT EXISTS idx_hourly_corridor_time ON train_hourly_train_stats(des_corridor, hour_epoch DESC);
     CREATE INDEX IF NOT EXISTS idx_daily_day ON train_daily_stats(day DESC);
     CREATE INDEX IF NOT EXISTS idx_daily_product_day ON train_daily_stats(cod_product, day DESC);
   `);
@@ -174,6 +193,7 @@ const truncateTarget = async (client: Client) => {
   await client.query(`
     TRUNCATE TABLE
       train_observations,
+      train_hourly_train_stats,
       train_snapshots,
       train_daily_stats,
       trains_current,
@@ -191,6 +211,14 @@ const normalizeValue = (value: unknown) => {
   }
 
   return value ?? null;
+};
+
+const sqliteHasTable = (sourceDb: Database, tableName: string): boolean => {
+  const row = sourceDb
+    .query(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1`)
+    .get(tableName) as { ok: number } | undefined;
+
+  return Boolean(row?.ok);
 };
 
 const insertRows = async (
@@ -354,6 +382,30 @@ const run = async () => {
       ],
       "id",
     );
+    if (sqliteHasTable(sqlite, "train_hourly_train_stats")) {
+      await copyTable(
+        pg,
+        sqlite,
+        "train_hourly_train_stats",
+        [
+          "hour_epoch",
+          "cod_comercial",
+          "cod_product",
+          "des_corridor",
+          "observations",
+          "on_time_count",
+          "delayed_over_15_count",
+          "severe_count",
+          "accessible_count",
+          "sum_delay",
+          "sum_positive_delay",
+          "max_delay",
+        ],
+        "hour_epoch, cod_comercial",
+      );
+    } else {
+      console.log("[migrate] train_hourly_train_stats: tabla no existe en sqlite, omitida");
+    }
     await copyTable(
       pg,
       sqlite,

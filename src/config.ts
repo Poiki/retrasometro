@@ -35,8 +35,12 @@ export const config = {
     Bun.env.STATIONS_ENDPOINT ??
     "https://tiempo-real.largorecorrido.renfe.com/data/estaciones.geojson",
   cacheFile: Bun.env.CACHE_FILE ?? "./data/cache/flotaLD.latest.json",
+  displayCacheDir: Bun.env.DISPLAY_CACHE_DIR ?? "./data/cache/display",
+  displayCache24Seconds: parseNumber(Bun.env.DISPLAY_CACHE_24_SECONDS, 60),
+  displayCache168Seconds: parseNumber(Bun.env.DISPLAY_CACHE_168_SECONDS, 300),
+  displayCache720Seconds: parseNumber(Bun.env.DISPLAY_CACHE_720_SECONDS, 900),
   apiKeyTtlSeconds: parseNumber(Bun.env.API_KEY_TTL_SECONDS, 900),
-  apiRateLimitMs: parseNumber(Bun.env.API_RATE_LIMIT_MS, 1000),
+  apiRateLimitMs: parseNumber(Bun.env.API_RATE_LIMIT_MS, 200),
   rawMaxTrains: parseNumber(Bun.env.RAW_MAX_TRAINS, 5000),
   historyRetentionDays: parseNumber(Bun.env.HISTORY_RETENTION_DAYS, 0),
   recoveryLookbackHours: parseNumber(Bun.env.RECOVERY_LOOKBACK_HOURS, 72),

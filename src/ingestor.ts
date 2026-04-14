@@ -30,6 +30,7 @@ interface IngestStatus {
 
 export class RenfeIngestor {
   private readonly db: DB;
+  private readonly onAfterSuccessfulRun?: (nowEpoch: number) => Promise<void> | void;
   private isTickRunning = false;
   private runTimer: Timer | null = null;
   private stationTimer: Timer | null = null;
@@ -46,8 +47,9 @@ export class RenfeIngestor {
     runs: 0,
   };
 
-  constructor(db: DB) {
+  constructor(db: DB, onAfterSuccessfulRun?: (nowEpoch: number) => Promise<void> | void) {
     this.db = db;
+    this.onAfterSuccessfulRun = onAfterSuccessfulRun;
     mkdirSync(dirname(config.cacheFile), { recursive: true });
   }
 
@@ -55,6 +57,7 @@ export class RenfeIngestor {
     await this.refreshStations();
     await this.runOnce();
     await this.recoverHistoricalData();
+    void this.bootstrapHourlyAggregates();
 
     this.runTimer = setInterval(() => {
       void this.runOnce();
@@ -207,6 +210,8 @@ export class RenfeIngestor {
           nowEpoch,
           distanceKm,
         });
+
+        this.db.upsertHourlyTrainStats(train, nowEpoch);
       }
 
       this.db.insertTrainObservations(
@@ -240,6 +245,15 @@ export class RenfeIngestor {
       this.status.lastTrainCount = normalized.length;
 
       this.runCounter += 1;
+
+      if (this.onAfterSuccessfulRun) {
+        try {
+          await this.onAfterSuccessfulRun(nowEpoch);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[display-cache] error ${message}`);
+        }
+      }
 
       console.log(
         `[ingestor] ok trains=${normalized.length} snapshots=${snapshotCount} removed=${removed} source=${source} repeated=${isRepeatedProviderUpdate ? 1 : 0}`,
@@ -321,6 +335,7 @@ export class RenfeIngestor {
       if (config.historyRetentionDays > 0) {
         const historyCutoff = nowEpoch - config.historyRetentionDays * 24 * 3600;
         this.db.cleanupObservations(historyCutoff);
+        this.db.cleanupHourlyStats(historyCutoff);
         this.db.cleanupBatches(historyCutoff);
       }
 
@@ -339,8 +354,26 @@ export class RenfeIngestor {
     const recovered = this.db.recoverObservationsFromSnapshots(sinceEpoch);
 
     if (recovered > 0) {
+      const refreshedHourly = this.db.bootstrapHourlyStatsFromObservations(sinceEpoch);
       console.log(`[recovery] observaciones recuperadas desde snapshots=${recovered}`);
+      console.log(`[recovery] hourly refrescado=${refreshedHourly} desde=${sinceEpoch}`);
     }
+  }
+
+  private async bootstrapHourlyAggregates() {
+    await Promise.resolve();
+
+    const stateKey = "hourly_bootstrap_last_30d_v1";
+    const alreadyBootstrapped = this.db.getState(stateKey);
+    if (alreadyBootstrapped) {
+      return;
+    }
+
+    console.log("[hourly-bootstrap] iniciando backfill de 30 dias");
+    const sinceEpoch = toEpochSeconds() - 30 * 24 * 3600;
+    const upserted = this.db.bootstrapHourlyStatsFromObservations(sinceEpoch);
+    this.db.setState(stateKey, String(toEpochSeconds()));
+    console.log(`[hourly-bootstrap] filas procesadas=${upserted} desde=${sinceEpoch}`);
   }
 
   async refreshStations() {

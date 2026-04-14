@@ -153,8 +153,12 @@ Variables principales:
 - `SNAPSHOT_RETENTION_HOURS`: retención de snapshots.
 - `SNAPSHOT_HEARTBEAT_SECONDS`: inserta snapshot aunque no cambie el tren cada N segundos.
 - `COMPACT_EVERY_RUNS`: cada cuántas ingestas ejecutar compactación.
+- `DISPLAY_CACHE_DIR`: carpeta de cache JSON de dashboard precomputado.
+- `DISPLAY_CACHE_24_SECONDS`: refresco del cache de ventana 24h.
+- `DISPLAY_CACHE_168_SECONDS`: refresco del cache de ventana 7d.
+- `DISPLAY_CACHE_720_SECONDS`: refresco del cache de ventana 30d.
 - `API_KEY_TTL_SECONDS`: duración de la clave API temporal.
-- `API_RATE_LIMIT_MS`: intervalo mínimo entre peticiones por clave (default `1000`).
+- `API_RATE_LIMIT_MS`: intervalo mínimo entre peticiones por clave (default `200`).
 - `RAW_MAX_TRAINS`: máximo de trenes en `/api/raw/live`.
 - `HISTORY_RETENTION_DAYS`: retención de `train_observations` (0 = indefinido).
 - `RECOVERY_LOOKBACK_HOURS`: ventana de recuperación desde snapshots al arrancar.
