@@ -1,4 +1,10 @@
+import { initThemeController } from "./theme.js";
+
 const docsLangSwitchEl = document.querySelector("#docs-lang-switch");
+const docsThemeSwitchEl = document.querySelector("#docs-theme-switch");
+const docsThemeOptionSystemEl = document.querySelector("#docs-theme-option-system");
+const docsThemeOptionLightEl = document.querySelector("#docs-theme-option-light");
+const docsThemeOptionDarkEl = document.querySelector("#docs-theme-option-dark");
 const docsStatusEl = document.querySelector("#docs-status");
 const requestKeyBtnEl = document.querySelector("#request-key-btn");
 const backHomeBtnEl = document.querySelector("#back-home-btn");
@@ -18,6 +24,10 @@ const I18N = {
     subtitle:
       "Esta vista está separada del panel principal. Solicita aquí la clave temporal y consulta ejemplos reales.",
     langLabel: "Idioma",
+    themeLabel: "Tema",
+    themeSystem: "Sistema",
+    themeLight: "Claro",
+    themeDark: "Oscuro",
     backHome: "Volver al panel",
     loading: "Cargando...",
     securityTitle: "Autenticación y límites",
@@ -52,6 +62,10 @@ const I18N = {
     subtitle:
       "This view is separated from the main dashboard. Request your temporary key and inspect real response examples.",
     langLabel: "Language",
+    themeLabel: "Theme",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
     backHome: "Back to dashboard",
     loading: "Loading...",
     securityTitle: "Authentication and limits",
@@ -88,6 +102,7 @@ const state = {
   apiKey: null,
   apiKeyExpiresAt: null,
 };
+let themeController = null;
 
 const t = (key) => I18N[state.lang][key] || key;
 const locale = () => (state.lang === "es" ? "es-ES" : "en-US");
@@ -313,6 +328,16 @@ const applyTexts = () => {
   setText("docs-title", t("title"));
   setText("docs-subtitle", t("subtitle"));
   setText("docs-lang-label", t("langLabel"));
+  setText("docs-theme-label", t("themeLabel"));
+  if (docsThemeOptionSystemEl) {
+    docsThemeOptionSystemEl.textContent = t("themeSystem");
+  }
+  if (docsThemeOptionLightEl) {
+    docsThemeOptionLightEl.textContent = t("themeLight");
+  }
+  if (docsThemeOptionDarkEl) {
+    docsThemeOptionDarkEl.textContent = t("themeDark");
+  }
   setText("back-home-btn", t("backHome"));
   setText("security-title", t("securityTitle"));
   setText("request-key-btn", t("askKey"));
@@ -418,6 +443,13 @@ docsLangSwitchEl.addEventListener("change", () => {
 });
 
 const boot = async () => {
+  if (docsThemeSwitchEl) {
+    themeController = initThemeController({
+      selectEl: docsThemeSwitchEl,
+    });
+    docsThemeSwitchEl.value = themeController.getMode();
+  }
+
   docsLangSwitchEl.value = state.lang;
   applyTexts();
   await loadDocs();

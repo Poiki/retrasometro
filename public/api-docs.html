@@ -6,30 +6,64 @@
     <title>retrasometro · API</title>
     <link rel="icon" type="image/webp" href="/assets/logos/favicons/icon.webp?v=20260414r1" />
     <link rel="icon" type="image/x-icon" href="/assets/logos/favicons/icon.ico?v=20260414r1" />
+    <script>
+      (function initThemeEarly() {
+        const key = "retrasometro_theme_mode";
+        let mode = "system";
+        try {
+          const stored = localStorage.getItem(key);
+          if (stored === "light" || stored === "dark" || stored === "system") {
+            mode = stored;
+          }
+        } catch {
+          mode = "system";
+        }
+
+        const isDark =
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const resolved = mode === "system" ? (isDark ? "dark" : "light") : mode;
+        document.documentElement.setAttribute("data-theme", resolved);
+        document.documentElement.style.colorScheme = resolved;
+      })();
+    </script>
     <link
       rel="preload"
-      href="/assets/fonts/manrope-latin.woff2?v=20260414r1"
+      href="/assets/fonts/ibm-plex-sans-latin-300.woff2?v=20260415r2"
       as="font"
       type="font/woff2"
       crossorigin
     />
     <link
       rel="preload"
-      href="/assets/fonts/space-grotesk-latin.woff2?v=20260414r1"
+      href="/assets/fonts/ibm-plex-sans-latin-400.woff2?v=20260415r2"
       as="font"
       type="font/woff2"
       crossorigin
     />
     <link
       rel="preload"
-      href="/styles.css?v=20260414r2"
+      href="/assets/fonts/ibm-plex-sans-latin-600.woff2?v=20260415r2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/assets/fonts/ibm-plex-mono-latin-400.woff2?v=20260415r2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/styles.css?v=20260415r2"
       as="style"
       onload="this.onload=null;this.rel='stylesheet'"
     />
-    <noscript><link rel="stylesheet" href="/styles.css?v=20260414r2" /></noscript>
+    <noscript><link rel="stylesheet" href="/styles.css?v=20260415r2" /></noscript>
   </head>
   <body>
-    <div class="bg-grid"></div>
     <main class="container docs-page">
       <header class="hero docs-hero">
         <div class="hero-brand">
@@ -44,7 +78,7 @@
               fetchpriority="high"
             />
           </picture>
-          <div>
+          <div class="hero-copy">
             <p class="kicker" id="docs-kicker">retrasometro API</p>
             <h1 id="docs-title">Referencia API y acceso con clave temporal</h1>
             <p class="subtitle" id="docs-subtitle">
@@ -55,11 +89,19 @@
 
         <div class="hero-side">
           <div class="hero-controls">
-            <label class="lang-wrap" for="docs-lang-switch">
+            <label class="lang-wrap control-field" for="docs-lang-switch">
               <span id="docs-lang-label">Idioma</span>
               <select id="docs-lang-switch" aria-label="Seleccionar idioma">
                 <option value="es">ES</option>
                 <option value="en">EN</option>
+              </select>
+            </label>
+            <label class="theme-wrap control-field" for="docs-theme-switch">
+              <span id="docs-theme-label">Tema</span>
+              <select id="docs-theme-switch" aria-label="Seleccionar tema">
+                <option id="docs-theme-option-system" value="system">Sistema</option>
+                <option id="docs-theme-option-light" value="light">Claro</option>
+                <option id="docs-theme-option-dark" value="dark">Oscuro</option>
               </select>
             </label>
             <button id="back-home-btn" class="ghost-btn" type="button">Volver al panel</button>
@@ -106,7 +148,14 @@
       (function initDeferredKofiWidget() {
         const storedLang = localStorage.getItem("retrasometro_lang") ?? localStorage.getItem("renfe_lang");
         const browserLang = (navigator.language || "").toLowerCase();
-        const lang = storedLang === "en" ? "en" : storedLang === "es" ? "es" : browserLang.startsWith("en") ? "en" : "es";
+        const lang =
+          storedLang === "en"
+            ? "en"
+            : storedLang === "es"
+              ? "es"
+              : browserLang.startsWith("en")
+                ? "en"
+                : "es";
         const buttonText = lang === "en" ? "Support me" : "Apóyame";
         let loaded = false;
 
@@ -166,6 +215,6 @@
         );
       })();
     </script>
-    <script type="module" src="/api-docs.js?v=20260414r2"></script>
+    <script type="module" src="/api-docs.js?v=20260415r2"></script>
   </body>
 </html>

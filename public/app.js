@@ -1,3 +1,5 @@
+import { initThemeController } from "./theme.js";
+
 const overviewCardsEl = document.querySelector("#overview-cards");
 const delayBucketsEl = document.querySelector("#delay-buckets");
 const productsEl = document.querySelector("#products");
@@ -6,11 +8,15 @@ const todayMetricsEl = document.querySelector("#today-metrics");
 const trainsBodyEl = document.querySelector("#trains-body");
 const corridorsSearchInputEl = document.querySelector("#corridors-search");
 const historicalProductsSearchInputEl = document.querySelector("#historical-products-search");
+const accountabilityRoutesSearchInputEl = document.querySelector("#accountability-routes-search");
+const accountabilityTrainsSearchInputEl = document.querySelector("#accountability-trains-search");
 const statusPillEl = document.querySelector("#status-pill");
 const lastSeenEl = document.querySelector("#last-seen");
 const historicalCardsEl = document.querySelector("#historical-cards");
 const historicalHighlightsEl = document.querySelector("#historical-highlights");
 const historicalProductsEl = document.querySelector("#historical-products");
+const accountabilityRoutesEl = document.querySelector("#accountability-routes");
+const accountabilityTrainsEl = document.querySelector("#accountability-trains");
 const historyButtons = [...document.querySelectorAll(".history-btn")];
 const historyFromInputEl = document.querySelector("#history-from");
 const historyToInputEl = document.querySelector("#history-to");
@@ -26,6 +32,10 @@ const exportExcelBtnEl = document.querySelector("#export-excel-btn");
 const sortButtons = [...document.querySelectorAll("[data-sort]")];
 
 const langSwitchEl = document.querySelector("#lang-switch");
+const themeSwitchEl = document.querySelector("#theme-switch");
+const themeOptionSystemEl = document.querySelector("#theme-option-system");
+const themeOptionLightEl = document.querySelector("#theme-option-light");
+const themeOptionDarkEl = document.querySelector("#theme-option-dark");
 const apiDocsBtnEl = document.querySelector("#api-docs-btn");
 const rawToggleBtnEl = document.querySelector("#raw-toggle-btn");
 const rawPanelEl = document.querySelector("#raw-panel");
@@ -42,6 +52,10 @@ const I18N = {
     title: "Retrasos ferroviarios en tiempo real",
     subtitle: "",
     langLabel: "Idioma",
+    themeLabel: "Tema",
+    themeSystem: "Sistema",
+    themeLight: "Claro",
+    themeDark: "Oscuro",
     apiDocs: "API",
     rawToggle: "Datos en bruto",
     rawToggleHide: "Ocultar datos en bruto",
@@ -56,6 +70,8 @@ const I18N = {
     historicalTitle: "Estadísticas históricas",
     historicalHighlightsTitle: "Hallazgos del período",
     historicalProductsTitle: "Distribución histórica por tipo",
+    accountabilityRoutesTitle: "Rutas reincidentes",
+    accountabilityTrainsTitle: "Trenes reincidentes",
     historyFromLabel: "Desde",
     historyToLabel: "Hasta",
     historyApplyRange: "Aplicar rango",
@@ -94,10 +110,17 @@ const I18N = {
     histTopCorridor: "Corredor más problemático",
     histNoCorridor: "Sin corredor",
     histNoData: "Sin datos históricos para este período",
+    accountabilityNoData: "Sin datos de reincidencia para este período",
     histRangeApplied: "Rango histórico aplicado",
     histRangeCleared: "Rango histórico limpiado",
     histObsShort: "obs",
     histTrainsShort: "trenes",
+    accountabilityDelayed15: "% >15 min",
+    accountabilitySevere60: "% >60 min",
+    accountabilityTrendLabel: "Tendencia 24h vs 7d",
+    accountabilityTrendWorsening: "Empeora",
+    accountabilityTrendImproving: "Mejora",
+    accountabilityTrendFlat: "Estable",
     bucketAhead: "Adelantados",
     bucketOnTime: "En hora",
     bucketMild: "1-15 min",
@@ -106,6 +129,8 @@ const I18N = {
     corridorActive: "trenes activos",
     corridorDelay: "Retraso medio",
     corridorPeak: "pico",
+    corridorSourceOfficial: "oficial",
+    corridorSourceDerived: "eje derivado",
     todayDate: "Fecha",
     todayUnique: "Trenes únicos",
     todayObs: "Observaciones",
@@ -121,6 +146,23 @@ const I18N = {
     noLocalRows: "No hay resultados para el filtro local.",
     corridorsSearchPlaceholder: "Filtrar corredores",
     historicalProductsSearchPlaceholder: "Filtrar tipos históricos",
+    accountabilityRoutesSearchPlaceholder: "Filtrar rutas críticas",
+    accountabilityTrainsSearchPlaceholder: "Filtrar trenes reincidentes",
+    tooltipInfoAria: "Más información de la métrica",
+    tipAccumDelay:
+      "Suma de minutos con retraso positivo en el período. Fórmula: Σ max(retraso,0). Cuanto mayor, peor impacto acumulado.",
+    tipWeightedAvgDelay:
+      "Retraso medio ponderado por observación. Fórmula: Σ retraso / N observaciones. Resume el retraso típico real.",
+    tipDelayed15:
+      "Porcentaje de observaciones con retraso mayor de 15 min. Fórmula: obs(retraso>15)/obs totales.",
+    tipSevere60:
+      "Porcentaje de observaciones con retraso mayor de 60 min. Fórmula: obs(retraso>60)/obs totales.",
+    tipRepeatOffenders:
+      "Trenes que repiten retrasos altos en el período. Se ordenan por %>15, luego %>60 y volumen de observaciones.",
+    tipCriticalRoutes:
+      "Ejes origen↔destino con peor reincidencia. Se agrupan A↔B juntos y se exige un mínimo de observaciones.",
+    tipAvgTrainsPerBatch:
+      "Media de trenes recibidos por ciclo de ingesta. Ayuda a detectar bajadas de cobertura del proveedor.",
     routeSeparator: " -> ",
     keyRequestFailed: "No se pudo obtener clave API",
     rawGenerated: "Generado",
@@ -147,6 +189,10 @@ const I18N = {
     title: "Real-time rail delays",
     subtitle: "",
     langLabel: "Language",
+    themeLabel: "Theme",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
     apiDocs: "API",
     rawToggle: "Raw data",
     rawToggleHide: "Hide raw data",
@@ -161,6 +207,8 @@ const I18N = {
     historicalTitle: "Historical statistics",
     historicalHighlightsTitle: "Period highlights",
     historicalProductsTitle: "Historical distribution by type",
+    accountabilityRoutesTitle: "Repeat routes",
+    accountabilityTrainsTitle: "Repeat trains",
     historyFromLabel: "From",
     historyToLabel: "To",
     historyApplyRange: "Apply range",
@@ -199,10 +247,17 @@ const I18N = {
     histTopCorridor: "Most problematic corridor",
     histNoCorridor: "No corridor",
     histNoData: "No historical data for this range",
+    accountabilityNoData: "No repeat-offender data for this range",
     histRangeApplied: "Historical range applied",
     histRangeCleared: "Historical range cleared",
     histObsShort: "obs",
     histTrainsShort: "trains",
+    accountabilityDelayed15: "% >15 min",
+    accountabilitySevere60: "% >60 min",
+    accountabilityTrendLabel: "24h vs 7d trend",
+    accountabilityTrendWorsening: "Worsening",
+    accountabilityTrendImproving: "Improving",
+    accountabilityTrendFlat: "Stable",
     bucketAhead: "Ahead",
     bucketOnTime: "On time",
     bucketMild: "1-15 min",
@@ -211,6 +266,8 @@ const I18N = {
     corridorActive: "active trains",
     corridorDelay: "Average delay",
     corridorPeak: "peak",
+    corridorSourceOfficial: "official",
+    corridorSourceDerived: "derived axis",
     todayDate: "Date",
     todayUnique: "Unique trains",
     todayObs: "Observations",
@@ -226,6 +283,23 @@ const I18N = {
     noLocalRows: "No results for this local filter.",
     corridorsSearchPlaceholder: "Filter corridors",
     historicalProductsSearchPlaceholder: "Filter historical types",
+    accountabilityRoutesSearchPlaceholder: "Filter critical routes",
+    accountabilityTrainsSearchPlaceholder: "Filter repeat trains",
+    tooltipInfoAria: "More metric info",
+    tipAccumDelay:
+      "Sum of positive delay minutes during the window. Formula: Σ max(delay,0). Higher means worse accumulated impact.",
+    tipWeightedAvgDelay:
+      "Observation-weighted average delay. Formula: Σ delay / N observations. Captures typical real delay.",
+    tipDelayed15:
+      "Percentage of observations delayed more than 15 min. Formula: obs(delay>15)/total observations.",
+    tipSevere60:
+      "Percentage of observations delayed more than 60 min. Formula: obs(delay>60)/total observations.",
+    tipRepeatOffenders:
+      "Trains repeatedly showing high delays in the period. Sorted by %>15, then %>60, then observation volume.",
+    tipCriticalRoutes:
+      "Origin↔destination axes with worst repeat delay ratios. A↔B and B↔A are grouped, with minimum observation thresholds.",
+    tipAvgTrainsPerBatch:
+      "Average trains per ingestion batch. Useful to detect provider coverage drops.",
     routeSeparator: " -> ",
     keyRequestFailed: "Could not request API key",
     rawGenerated: "Generated",
@@ -271,6 +345,8 @@ const state = {
   historyTo: "",
   corridorsQuery: "",
   historicalProductsQuery: "",
+  accountabilityRoutesQuery: "",
+  accountabilityTrainsQuery: "",
   apiKey: null,
   apiKeyExpiresAt: 0,
   apiMinIntervalMs: 200,
@@ -291,6 +367,7 @@ const INACTIVITY_SYNC_MS = 60_000;
 
 let latestDashboard = null;
 let numberFmt = new Intl.NumberFormat("es-ES");
+let themeController = null;
 
 const t = (key) => I18N[state.lang][key] || key;
 const locale = () => (state.lang === "es" ? "es-ES" : "en-US");
@@ -324,6 +401,24 @@ const escapeHtml = (value) => {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+};
+
+const metricLabelWithInfo = (label, infoText, idSuffix) => {
+  const safeLabel = escapeHtml(label);
+  const safeInfo = escapeHtml(infoText);
+  const tipId = `tip-${idSuffix}`;
+  return `<span class="label-with-tip">${safeLabel}<span class="metric-info"><button type="button" class="info-trigger" aria-label="${escapeHtml(t("tooltipInfoAria"))}" aria-controls="${tipId}" aria-expanded="false">ⓘ</button><span id="${tipId}" class="info-popover" role="tooltip">${safeInfo}</span></span></span>`;
+};
+
+const closeOpenTooltips = () => {
+  const wrappers = document.querySelectorAll(".metric-info.open");
+  for (const wrapper of wrappers) {
+    wrapper.classList.remove("open");
+    const trigger = wrapper.querySelector(".info-trigger");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  }
 };
 
 const toBigIntLoose = (value) => {
@@ -475,6 +570,16 @@ const applyStaticTexts = () => {
   updateTextContent("title-text", t("title"));
   updateTextContent("subtitle-text", t("subtitle"));
   updateTextContent("lang-label", t("langLabel"));
+  updateTextContent("theme-label", t("themeLabel"));
+  if (themeOptionSystemEl) {
+    themeOptionSystemEl.textContent = t("themeSystem");
+  }
+  if (themeOptionLightEl) {
+    themeOptionLightEl.textContent = t("themeLight");
+  }
+  if (themeOptionDarkEl) {
+    themeOptionDarkEl.textContent = t("themeDark");
+  }
   updateTextContent("api-docs-btn", t("apiDocs"));
   updateTextContent("raw-toggle-btn", state.isRawOpen ? t("rawToggleHide") : t("rawToggle"));
   updateTextContent("raw-title", t("rawTitle"));
@@ -488,6 +593,22 @@ const applyStaticTexts = () => {
   updateTextContent("historical-title", t("historicalTitle"));
   updateTextContent("historical-highlights-title", t("historicalHighlightsTitle"));
   updateTextContent("historical-products-title", t("historicalProductsTitle"));
+  const accountabilityRoutesTitleEl = document.querySelector("#accountability-routes-title");
+  if (accountabilityRoutesTitleEl) {
+    accountabilityRoutesTitleEl.innerHTML = metricLabelWithInfo(
+      t("accountabilityRoutesTitle"),
+      t("tipCriticalRoutes"),
+      "title-critical-routes",
+    );
+  }
+  const accountabilityTrainsTitleEl = document.querySelector("#accountability-trains-title");
+  if (accountabilityTrainsTitleEl) {
+    accountabilityTrainsTitleEl.innerHTML = metricLabelWithInfo(
+      t("accountabilityTrainsTitle"),
+      t("tipRepeatOffenders"),
+      "title-repeat-offenders",
+    );
+  }
   updateTextContent("history-from-label", t("historyFromLabel"));
   updateTextContent("history-to-label", t("historyToLabel"));
   updateTextContent("history-range-apply", t("historyApplyRange"));
@@ -512,6 +633,12 @@ const applyStaticTexts = () => {
   }
   if (historicalProductsSearchInputEl) {
     historicalProductsSearchInputEl.placeholder = t("historicalProductsSearchPlaceholder");
+  }
+  if (accountabilityRoutesSearchInputEl) {
+    accountabilityRoutesSearchInputEl.placeholder = t("accountabilityRoutesSearchPlaceholder");
+  }
+  if (accountabilityTrainsSearchInputEl) {
+    accountabilityTrainsSearchInputEl.placeholder = t("accountabilityTrainsSearchPlaceholder");
   }
 
   if (!latestDashboard) {
@@ -725,7 +852,7 @@ const renderCorridors = (corridors) => {
     filter.length === 0
       ? corridors
       : corridors.filter((item) =>
-          String(item.corridor || "")
+          `${String(item.corridor || "")} ${String(item.axisLabel || "")} ${String(item.axisKey || "")}`
             .toLocaleLowerCase(locale())
             .includes(filter),
         );
@@ -737,13 +864,18 @@ const renderCorridors = (corridors) => {
 
   corridorsEl.innerHTML = visibleCorridors
     .map(
-      (item) => `
+      (item) => {
+        const sourceLabel =
+          item.source === "derived_axis" ? t("corridorSourceDerived") : t("corridorSourceOfficial");
+        const sourceClass = item.source === "derived_axis" ? "derived" : "official";
+        return `
       <div class="list-item">
-        <div class="name">${escapeHtml(item.corridor)}</div>
+        <div class="name">${escapeHtml(item.corridor)} <span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div>
         <div class="meta">${numberFmt.format(item.train_count)} ${t("corridorActive")}</div>
         <div class="meta">${t("corridorDelay")}: ${item.avg_delay.toFixed(1)} ${t("minutes")} | ${t("corridorPeak")}: ${item.max_delay} ${t("minutes")}</div>
       </div>
-    `,
+    `;
+      },
     )
     .join("");
 };
@@ -754,7 +886,11 @@ const renderToday = (today) => {
     { label: t("todayDate"), value: today.day },
     { label: t("todayUnique"), value: numberFmt.format(today.uniqueTrains) },
     { label: t("todayObs"), value: numberFmt.format(today.observations) },
-    { label: t("todayWeighted"), value: `${today.weightedAvgDelay.toFixed(1)} ${t("minutes")}` },
+    {
+      label: t("todayWeighted"),
+      labelHtml: metricLabelWithInfo(t("todayWeighted"), t("tipWeightedAvgDelay"), "today-weighted-delay"),
+      value: `${today.weightedAvgDelay.toFixed(1)} ${t("minutes")}`,
+    },
     { label: t("todayPeak"), value: `${today.peakDelay} ${t("minutes")}` },
     { label: t("todayKm"), value: `${Math.round(today.kmTracked)} km` },
   ];
@@ -763,7 +899,7 @@ const renderToday = (today) => {
     .map(
       (item) => `
       <div class="today-box">
-        <div class="label">${escapeHtml(item.label)}</div>
+        <div class="label">${item.labelHtml ?? escapeHtml(item.label)}</div>
         <div class="value">${escapeHtml(item.value)}</div>
       </div>
     `,
@@ -771,13 +907,108 @@ const renderToday = (today) => {
     .join("");
 };
 
+const renderAccountability = (accountability) => {
+  accountabilityRoutesEl.classList.remove("skeleton-list");
+  accountabilityTrainsEl.classList.remove("skeleton-list");
+
+  if (!accountability || !accountability.summary) {
+    accountabilityRoutesEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
+    accountabilityTrainsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
+    return;
+  }
+
+  const summary = accountability.summary || {};
+  const worsening = summary.worseningVs7d || {};
+  const trend =
+    worsening.trend === "worsening"
+      ? t("accountabilityTrendWorsening")
+      : worsening.trend === "improving"
+        ? t("accountabilityTrendImproving")
+        : t("accountabilityTrendFlat");
+
+  const routes = Array.isArray(accountability.criticalRoutes) ? accountability.criticalRoutes : [];
+  const routesFilter = state.accountabilityRoutesQuery.trim().toLocaleLowerCase(locale());
+  const visibleRoutes =
+    routesFilter.length === 0
+      ? routes
+      : routes.filter((item) =>
+          `${String(item.axisLabel || "")} ${String(item.axisKey || "")}`
+            .toLocaleLowerCase(locale())
+            .includes(routesFilter),
+        );
+
+  const routesSummary = `
+    <div class="list-item compact">
+      <div class="name">${metricLabelWithInfo(t("accountabilityDelayed15"), t("tipDelayed15"), "accountability-delayed15")} ${Number(summary.delayed15Pct || 0).toFixed(1)}%</div>
+      <div class="meta">${metricLabelWithInfo(t("accountabilitySevere60"), t("tipSevere60"), "accountability-severe60")} ${Number(summary.severe60Pct || 0).toFixed(1)}%</div>
+      <div class="meta">${escapeHtml(t("accountabilityTrendLabel"))}: ${escapeHtml(trend)}</div>
+    </div>
+  `;
+
+  const routeRows = visibleRoutes
+    .slice(0, 12)
+    .map((item) => {
+      const sourceLabel =
+        item.source === "derived_axis" ? t("corridorSourceDerived") : t("corridorSourceOfficial");
+      const sourceClass = item.source === "derived_axis" ? "derived" : "official";
+      return `
+        <div class="list-item">
+          <div class="name">${escapeHtml(item.axisLabel || "-")} <span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div>
+          <div class="meta">${numberFmt.format(item.observations || 0)} ${t("histObsShort")} · ${Number(item.avgDelay || 0).toFixed(1)} ${t("minutes")} · max ${item.maxDelay || 0} ${t("minutes")}</div>
+          <div class="meta">${t("accountabilityDelayed15")}: ${Number(item.delayed15Pct || 0).toFixed(1)}% · ${t("accountabilitySevere60")}: ${Number(item.severe60Pct || 0).toFixed(1)}%</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  accountabilityRoutesEl.innerHTML =
+    routesSummary +
+    (routeRows.length > 0
+      ? routeRows
+      : `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`);
+
+  const offenders = Array.isArray(accountability.repeatOffenders) ? accountability.repeatOffenders : [];
+  const offendersFilter = state.accountabilityTrainsQuery.trim().toLocaleLowerCase(locale());
+  const visibleOffenders =
+    offendersFilter.length === 0
+      ? offenders
+      : offenders.filter((item) =>
+          `${String(item.codComercial || "")} ${String(item.productName || item.codProduct || "")} ${String(item.origin || "")} ${String(item.destination || "")}`
+            .toLocaleLowerCase(locale())
+            .includes(offendersFilter),
+        );
+
+  if (visibleOffenders.length === 0) {
+    accountabilityTrainsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
+    return;
+  }
+
+  accountabilityTrainsEl.innerHTML = visibleOffenders
+    .slice(0, 12)
+    .map(
+      (item) => `
+        <div class="list-item">
+          <div class="name">${escapeHtml(item.codComercial || "-")} · ${escapeHtml(item.productName || item.codProduct || "-")}</div>
+          <div class="meta">${escapeHtml(stationPair(item.origin, item.destination, null, null))}</div>
+          <div class="meta">${numberFmt.format(item.observations || 0)} ${t("histObsShort")} · ${Number(item.avgDelay || 0).toFixed(1)} ${t("minutes")} · max ${item.maxDelay || 0} ${t("minutes")}</div>
+          <div class="meta">${t("accountabilityDelayed15")}: ${Number(item.delayed15Pct || 0).toFixed(1)}% · ${t("accountabilitySevere60")}: ${Number(item.severe60Pct || 0).toFixed(1)}%</div>
+        </div>
+      `,
+    )
+    .join("");
+};
+
 const renderHistorical = (historical) => {
   historicalProductsEl.classList.remove("skeleton-bars");
   historicalHighlightsEl.classList.remove("skeleton-list");
+  accountabilityRoutesEl.classList.remove("skeleton-list");
+  accountabilityTrainsEl.classList.remove("skeleton-list");
   if (!historical || !historical.summary) {
     historicalCardsEl.innerHTML = "";
     historicalHighlightsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("histNoData"))}</div></div>`;
     historicalProductsEl.innerHTML = "";
+    accountabilityRoutesEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
+    accountabilityTrainsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
     return;
   }
 
@@ -789,17 +1020,25 @@ const renderHistorical = (historical) => {
     { label: t("histCardUniqueTrains"), value: numberFmt.format(summary.uniqueTrains || 0) },
     { label: t("histCardAvgDelay"), value: `${Number(summary.avgDelay || 0).toFixed(1)} ${t("minutes")}` },
     { label: t("histCardMaxDelay"), value: `${summary.maxDelay || 0} ${t("minutes")}` },
-    { label: t("histCardAccumDelay"), value: `${formatLargeInt(summary.accumulatedDelayMinutes)} ${t("minutes")}` },
+    {
+      label: t("histCardAccumDelay"),
+      labelHtml: metricLabelWithInfo(t("histCardAccumDelay"), t("tipAccumDelay"), "hist-accum-delay"),
+      value: `${formatLargeInt(summary.accumulatedDelayMinutes)} ${t("minutes")}`,
+    },
     { label: t("histCardOnTimePct"), value: `${Number(summary.onTimePct || 0).toFixed(1)}%` },
     { label: t("histCardSeverePct"), value: `${Number(summary.severePct || 0).toFixed(1)}%` },
-    { label: t("histCardAvgBatch"), value: numberFmt.format(Math.round(ingestion.avgTrainsPerBatch || 0)) },
+    {
+      label: t("histCardAvgBatch"),
+      labelHtml: metricLabelWithInfo(t("histCardAvgBatch"), t("tipAvgTrainsPerBatch"), "hist-avg-batch"),
+      value: numberFmt.format(Math.round(ingestion.avgTrainsPerBatch || 0)),
+    },
   ];
 
   historicalCardsEl.innerHTML = cards
     .map(
       (card) => `
       <article class="card">
-        <div class="label">${escapeHtml(card.label)}</div>
+        <div class="label">${card.labelHtml ?? escapeHtml(card.label)}</div>
         <div class="value">${escapeHtml(card.value)}</div>
       </article>
     `,
@@ -822,9 +1061,12 @@ const renderHistorical = (historical) => {
 
   if (topCorridor) {
     const corridorName = topCorridor.corridor || t("histNoCorridor");
+    const sourceLabel =
+      topCorridor.source === "derived_axis" ? t("corridorSourceDerived") : t("corridorSourceOfficial");
+    const sourceClass = topCorridor.source === "derived_axis" ? "derived" : "official";
     highlightRows.push(`
       <div class="list-item">
-        <div class="name">${escapeHtml(t("histTopCorridor"))}: ${escapeHtml(corridorName)}</div>
+        <div class="name">${escapeHtml(t("histTopCorridor"))}: ${escapeHtml(corridorName)} <span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div>
         <div class="meta">${formatLargeInt(topCorridor.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topCorridor.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topCorridor.trains || 0)} ${t("histTrainsShort")}</div>
       </div>
     `);
@@ -849,6 +1091,7 @@ const renderHistorical = (historical) => {
 
   if (visibleByProduct.length === 0) {
     historicalProductsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
+    renderAccountability(historical.accountability ?? null);
     return;
   }
 
@@ -866,6 +1109,7 @@ const renderHistorical = (historical) => {
   }));
 
   renderBarRows(historicalProductsEl, rows);
+  renderAccountability(historical.accountability ?? null);
 };
 
 const stationPair = (origin, destination, originCode, destinationCode) => {
@@ -1323,6 +1567,9 @@ for (const button of sortButtons) {
 
 searchInput.addEventListener("input", markUserActivity);
 minDelayInput.addEventListener("input", markUserActivity);
+if (themeSwitchEl) {
+  themeSwitchEl.addEventListener("change", markUserActivity);
+}
 
 if (corridorsSearchInputEl) {
   corridorsSearchInputEl.addEventListener("input", () => {
@@ -1336,6 +1583,22 @@ if (historicalProductsSearchInputEl) {
   historicalProductsSearchInputEl.addEventListener("input", () => {
     markUserActivity();
     state.historicalProductsQuery = historicalProductsSearchInputEl.value || "";
+    rerenderLocalFilteredPanels();
+  });
+}
+
+if (accountabilityRoutesSearchInputEl) {
+  accountabilityRoutesSearchInputEl.addEventListener("input", () => {
+    markUserActivity();
+    state.accountabilityRoutesQuery = accountabilityRoutesSearchInputEl.value || "";
+    rerenderLocalFilteredPanels();
+  });
+}
+
+if (accountabilityTrainsSearchInputEl) {
+  accountabilityTrainsSearchInputEl.addEventListener("input", () => {
+    markUserActivity();
+    state.accountabilityTrainsQuery = accountabilityTrainsSearchInputEl.value || "";
     rerenderLocalFilteredPanels();
   });
 }
@@ -1390,7 +1653,49 @@ if (exportExcelBtnEl) {
   });
 }
 
+document.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+
+  const trigger = event.target.closest(".info-trigger");
+  if (trigger) {
+    const wrapper = trigger.closest(".metric-info");
+    if (!wrapper) {
+      return;
+    }
+
+    const isOpen = wrapper.classList.contains("open");
+    closeOpenTooltips();
+    if (!isOpen) {
+      wrapper.classList.add("open");
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+
+  if (!event.target.closest(".metric-info")) {
+    closeOpenTooltips();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeOpenTooltips();
+    if (document.activeElement instanceof HTMLElement && document.activeElement.classList.contains("info-trigger")) {
+      document.activeElement.blur();
+    }
+  }
+});
+
 const boot = async () => {
+  if (themeSwitchEl) {
+    themeController = initThemeController({
+      selectEl: themeSwitchEl,
+    });
+    themeSwitchEl.value = themeController.getMode();
+  }
+
   langSwitchEl.value = state.lang;
   localStorage.removeItem("retrasometro_history_from");
   localStorage.removeItem("retrasometro_history_to");
