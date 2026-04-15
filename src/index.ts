@@ -10,8 +10,11 @@ const ingestor = new RenfeIngestor(db, async (currentEpoch) => {
   await dashboardPresetCache.refreshDue(currentEpoch);
 });
 
-await ingestor.start();
 const server = startServer(db, ingestor, dashboardPresetCache);
+void ingestor.start().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[startup] ingestor init error ${message}`);
+});
 
 const shutdown = () => {
   console.log("[shutdown] stopping server");
