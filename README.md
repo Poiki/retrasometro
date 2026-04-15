@@ -148,6 +148,8 @@ Variables principales:
 - `DB_PATH`: ruta SQLite (default `./data/renfe.db`).
 - `POLL_INTERVAL_MS`: frecuencia de ingesta (default `60000`).
 - `RENFE_ENDPOINTS`: endpoints separados por coma.
+- `STATIONS_ENDPOINT`: fuente principal GeoJSON de estaciones (larga distancia).
+- `STATIONS_SUPPLEMENTAL_ENDPOINT`: fuente secundaria GeoJSON (p. ej. Cercanías) para completar códigos faltantes.
 - `FETCH_TIMEOUT_MS`: timeout HTTP por intento.
 - `STALE_TRAIN_SECONDS`: segundos para purgar trenes no vistos.
 - `SNAPSHOT_RETENTION_HOURS`: retención de snapshots.
@@ -160,7 +162,20 @@ Variables principales:
 - `API_KEY_TTL_SECONDS`: duración de la clave API temporal.
 - `API_RATE_LIMIT_MS`: intervalo mínimo entre peticiones por clave (default `200`).
 - `RAW_MAX_TRAINS`: máximo de trenes en `/api/raw/live`.
-- `HISTORY_RETENTION_DAYS`: retención de `train_observations` (0 = indefinido).
+- `OBSERVATION_RETENTION_DAYS`: retención de `train_observations` en SQLite.
+- `HOURLY_RETENTION_DAYS`: retención de `train_hourly_train_stats`.
+- `DAILY_RETENTION_DAYS`: retención de `train_daily_stats` (`0` = indefinido).
+- `BATCH_RETENTION_DAYS`: retención de `ingestion_batches`.
+- `ARCHIVE_ENABLED`: activa archivado previo de observaciones antiguas.
+- `ARCHIVE_DIR`: directorio destino para `JSONL.zst` por hora.
+- `ARCHIVE_ZSTD_LEVEL`: nivel de compresión Zstd (1-19).
+- `ARCHIVE_ENABLED=1` requiere binario `zstd` disponible en runtime para crear chunks comprimidos.
+- `WAL_CHECKPOINT_TRUNCATE_BYTES`: tamaño mínimo del WAL para checkpoint `TRUNCATE`.
+- `HTTP_COMPRESSION_ENABLED`: activa compresión HTTP (`br`/`gzip`).
+- `HTTP_COMPRESSION_MIN_BYTES`: umbral mínimo de tamaño para comprimir respuestas.
+- `HTTP_GZIP_LEVEL`: nivel de `gzip` (1-9).
+- `HTTP_BROTLI_LEVEL`: nivel de `brotli` (1-11).
+- `HISTORY_RETENTION_DAYS`: compat legacy (alias de `OBSERVATION_RETENTION_DAYS`).
 - `RECOVERY_LOOKBACK_HOURS`: ventana de recuperación desde snapshots al arrancar.
 - `POSTGRES_URL`: conexión para migrar SQLite -> Postgres.
 - `SQLITE_PATH`: ruta SQLite para script de migración.
@@ -196,6 +211,8 @@ Idioma de API:
 Precisión numérica:
 
 - los campos acumulados grandes (por ejemplo `accumulatedDelayMinutes`) se exponen como `string` para evitar pérdida de precisión con valores muy altos.
+- `GET /api/dashboard` añade `historyPrecision` para indicar si el rango salió de detalle crudo o agregado (`raw_detail`, `aggregated_only`, `mixed`).
+- `GET /api/history/coverage` añade `storage` con `dbRows`, `archivedRows`, `archiveChunks`.
 
 <a id="flujo-consumo-api"></a>
 ### Flujo de consumo API

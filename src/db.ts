@@ -1,6 +1,18 @@
 import { Database } from "bun:sqlite";
-import { dirname } from "node:path";
-import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type {
   CurrentTrainRow,
   DashboardOverview,
@@ -47,14 +59,28 @@ interface ObservationInsertItem {
   hash: string;
 }
 
+interface HistoricalStatsCustomOptions {
+  preferAggregated: boolean;
+}
+
+interface ArchiveObservationsResult {
+  archivedChunks: number;
+  archivedRows: number;
+  skippedChunks: number;
+  deletedRows: number;
+}
+
 export class DB {
   private readonly db: Database;
+  private readonly dbPath: string;
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath, { create: true, strict: true });
     this.configure();
     this.createSchema();
+    this.ensureSchemaUpgrades();
   }
 
   private configure() {
@@ -186,13 +212,25 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_observations_train_time ON train_observations(cod_comercial, captured_at DESC);
       CREATE INDEX IF NOT EXISTS idx_observations_time ON train_observations(captured_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_observations_batch ON train_observations(batch_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_unique ON train_observations(cod_comercial, captured_at, source);
+
+      CREATE TABLE IF NOT EXISTS observation_archive_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_ts INTEGER NOT NULL,
+        to_ts INTEGER NOT NULL,
+        row_count INTEGER NOT NULL,
+        file_path TEXT NOT NULL UNIQUE,
+        sha256 TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_archive_chunks_range ON observation_archive_chunks(from_ts, to_ts);
 
       CREATE TABLE IF NOT EXISTS train_hourly_train_stats (
         hour_epoch INTEGER NOT NULL,
         cod_comercial TEXT NOT NULL,
         cod_product INTEGER NOT NULL,
+        cod_origen TEXT,
+        cod_destino TEXT,
         des_corridor TEXT,
         observations INTEGER NOT NULL DEFAULT 0,
         on_time_count INTEGER NOT NULL DEFAULT 0,
@@ -232,6 +270,44 @@ export class DB {
       CREATE INDEX IF NOT EXISTS idx_daily_day ON train_daily_stats(day DESC);
       CREATE INDEX IF NOT EXISTS idx_daily_product_day ON train_daily_stats(cod_product, day DESC);
     `);
+  }
+
+  private ensureSchemaUpgrades() {
+    const alterStatements = [
+      `ALTER TABLE train_hourly_train_stats ADD COLUMN cod_origen TEXT`,
+      `ALTER TABLE train_hourly_train_stats ADD COLUMN cod_destino TEXT`,
+    ];
+
+    for (const statement of alterStatements) {
+      try {
+        this.db.exec(statement);
+      } catch {
+        // Ignore if the column already exists or table is unavailable during first bootstrap.
+      }
+    }
+
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_hourly_axis_time ON train_hourly_train_stats(cod_origen, cod_destino, hour_epoch DESC);`,
+    );
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS observation_archive_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_ts INTEGER NOT NULL,
+        to_ts INTEGER NOT NULL,
+        row_count INTEGER NOT NULL,
+        file_path TEXT NOT NULL UNIQUE,
+        sha256 TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_archive_chunks_range ON observation_archive_chunks(from_ts, to_ts);
+    `);
+
+    try {
+      this.db.exec(`DROP INDEX IF EXISTS idx_observations_batch;`);
+    } catch {
+      // Ignore if index was already removed.
+    }
   }
 
   close() {
@@ -579,6 +655,8 @@ export class DB {
         hour_epoch,
         cod_comercial,
         cod_product,
+        cod_origen,
+        cod_destino,
         des_corridor,
         observations,
         on_time_count,
@@ -588,9 +666,11 @@ export class DB {
         sum_delay,
         sum_positive_delay,
         max_delay
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(hour_epoch, cod_comercial) DO UPDATE SET
         cod_product = excluded.cod_product,
+        cod_origen = excluded.cod_origen,
+        cod_destino = excluded.cod_destino,
         des_corridor = excluded.des_corridor,
         observations = train_hourly_train_stats.observations + excluded.observations,
         on_time_count = train_hourly_train_stats.on_time_count + excluded.on_time_count,
@@ -607,6 +687,8 @@ export class DB {
         hourEpoch,
         train.codComercial,
         train.codProduct,
+        train.codOrigen,
+        train.codDestino,
         train.desCorridor,
         1,
         delay === 0 ? 1 : 0,
@@ -681,6 +763,8 @@ export class DB {
         hour_epoch,
         cod_comercial,
         cod_product,
+        cod_origen,
+        cod_destino,
         des_corridor,
         observations,
         on_time_count,
@@ -695,6 +779,8 @@ export class DB {
         CAST((captured_at / 3600) AS INTEGER) * 3600 AS hour_epoch,
         cod_comercial,
         MAX(cod_product) AS cod_product,
+        MAX(cod_origen) AS cod_origen,
+        MAX(cod_destino) AS cod_destino,
         MAX(des_corridor) AS des_corridor,
         COUNT(*) AS observations,
         SUM(CASE WHEN ult_retraso = 0 THEN 1 ELSE 0 END) AS on_time_count,
@@ -709,6 +795,8 @@ export class DB {
       GROUP BY hour_epoch, cod_comercial
       ON CONFLICT(hour_epoch, cod_comercial) DO UPDATE SET
         cod_product = excluded.cod_product,
+        cod_origen = excluded.cod_origen,
+        cod_destino = excluded.cod_destino,
         des_corridor = excluded.des_corridor,
         observations = excluded.observations,
         on_time_count = excluded.on_time_count,
@@ -758,6 +846,15 @@ export class DB {
     return result.changes;
   }
 
+  cleanupDailyStats(cutoffEpoch: number): number {
+    const dayCutoff = new Date(cutoffEpoch * 1000).toISOString().slice(0, 10);
+    const result = this.db
+      .query(`DELETE FROM train_daily_stats WHERE day < ?`)
+      .run(dayCutoff);
+
+    return result.changes;
+  }
+
   cleanupBatches(cutoffEpoch: number): number {
     const result = this.db
       .query(`DELETE FROM ingestion_batches WHERE fetched_at < ?`)
@@ -774,9 +871,259 @@ export class DB {
     return result.changes;
   }
 
-  optimize() {
+  optimize(walTruncateThresholdBytes = 64 * 1024 * 1024) {
     this.db.exec(`PRAGMA optimize;`);
-    this.db.exec(`PRAGMA wal_checkpoint(PASSIVE);`);
+    const walPath = `${this.dbPath}-wal`;
+    let checkpointMode = "PASSIVE";
+
+    try {
+      if (walTruncateThresholdBytes > 0 && existsSync(walPath)) {
+        const stats = statSync(walPath);
+        if (stats.size >= walTruncateThresholdBytes) {
+          checkpointMode = "TRUNCATE";
+        }
+      }
+    } catch {
+      checkpointMode = "PASSIVE";
+    }
+
+    this.db.exec(`PRAGMA wal_checkpoint(${checkpointMode});`);
+    return checkpointMode;
+  }
+
+  getObservationArchiveStorage() {
+    const dbRows = this.db
+      .query(`SELECT COUNT(*) AS total FROM train_observations`)
+      .get() as { total: number } | undefined;
+
+    const archived = this.db
+      .query(
+        `
+      SELECT
+        COALESCE(SUM(row_count), 0) AS archived_rows,
+        COUNT(*) AS archive_chunks
+      FROM observation_archive_chunks
+      `,
+      )
+      .get() as { archived_rows: number; archive_chunks: number } | undefined;
+
+    return {
+      dbRows: dbRows?.total ?? 0,
+      archivedRows: archived?.archived_rows ?? 0,
+      archiveChunks: archived?.archive_chunks ?? 0,
+    };
+  }
+
+  archiveObservationsBefore(cutoffEpoch: number, archiveDir: string, zstdLevel: number): ArchiveObservationsResult {
+    const hourCutoff = Math.floor(cutoffEpoch / 3600) * 3600;
+
+    const buckets = this.db
+      .query(
+        `
+      SELECT
+        CAST((captured_at / 3600) AS INTEGER) * 3600 AS hour_epoch,
+        MIN(captured_at) AS from_ts,
+        MAX(captured_at) AS to_ts,
+        COUNT(*) AS row_count
+      FROM train_observations
+      WHERE captured_at < ?
+      GROUP BY hour_epoch
+      ORDER BY hour_epoch ASC
+      `,
+      )
+      .all(hourCutoff) as Array<{
+      hour_epoch: number;
+      from_ts: number;
+      to_ts: number;
+      row_count: number;
+    }>;
+
+    if (buckets.length === 0) {
+      return {
+        archivedChunks: 0,
+        archivedRows: 0,
+        skippedChunks: 0,
+        deletedRows: 0,
+      };
+    }
+
+    const getArchivePathForHour = (hourEpoch: number) => {
+      const date = new Date(hourEpoch * 1000);
+      const yyyy = String(date.getUTCFullYear());
+      const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(date.getUTCDate()).padStart(2, "0");
+      const hh = String(date.getUTCHours()).padStart(2, "0");
+
+      return join(archiveDir, yyyy, mm, dd, `${hh}.jsonl.zst`);
+    };
+
+    const archiveLevel = Math.max(1, Math.min(19, Math.trunc(zstdLevel || 3)));
+    let archivedChunks = 0;
+    let archivedRows = 0;
+    let skippedChunks = 0;
+    let deletedRows = 0;
+
+    for (const bucket of buckets) {
+      const archivePath = getArchivePathForHour(bucket.hour_epoch);
+      const existing = this.db
+        .query(
+          `
+        SELECT from_ts, to_ts, row_count
+        FROM observation_archive_chunks
+        WHERE file_path = ?
+        LIMIT 1
+        `,
+        )
+        .get(archivePath) as { from_ts: number; to_ts: number; row_count: number } | undefined;
+
+      if (existing) {
+        // Idempotencia: si el manifiesto existe, eliminamos cualquier residuo local de ese rango.
+        const deletedResidual = this.db
+          .query(`DELETE FROM train_observations WHERE captured_at >= ? AND captured_at <= ?`)
+          .run(existing.from_ts, existing.to_ts);
+        if (deletedResidual.changes > existing.row_count) {
+          throw new Error(
+            `residual delete mismatch en ${archivePath}: esperado<=${existing.row_count} actual=${deletedResidual.changes}`,
+          );
+        }
+        if (deletedResidual.changes > 0) {
+          deletedRows += deletedResidual.changes;
+        }
+        skippedChunks += 1;
+        continue;
+      }
+
+      const rows = this.db
+        .query(
+          `
+        SELECT
+          batch_id,
+          cod_comercial,
+          captured_at,
+          cod_product,
+          cod_origen,
+          cod_destino,
+          cod_est_ant,
+          cod_est_sig,
+          hora_llegada_sig_est,
+          des_corridor,
+          accesible,
+          ult_retraso,
+          latitud,
+          longitud,
+          gps_time,
+          p,
+          mat,
+          hash,
+          source,
+          is_estimated
+        FROM train_observations
+        WHERE captured_at >= ? AND captured_at <= ?
+        ORDER BY captured_at ASC, id ASC
+        `,
+        )
+        .all(bucket.from_ts, bucket.to_ts) as Array<Record<string, unknown>>;
+
+      if (rows.length === 0) {
+        continue;
+      }
+
+      if (rows.length !== bucket.row_count) {
+        throw new Error(
+          `row_count mismatch en ${archivePath}: esperado=${bucket.row_count} actual=${rows.length}`,
+        );
+      }
+
+      const rawContent = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+      const timestamp = `${Date.now()}-${process.pid}`;
+      const tempBasePath = `${archivePath}.tmp-${timestamp}`;
+      const rawTempPath = `${tempBasePath}.jsonl`;
+      const compressedTempPath = `${tempBasePath}.zst`;
+
+      mkdirSync(dirname(archivePath), { recursive: true });
+      writeFileSync(rawTempPath, rawContent, "utf8");
+
+      try {
+        const compress = Bun.spawnSync([
+          "zstd",
+          "-q",
+          "-f",
+          `-${archiveLevel}`,
+          "-o",
+          compressedTempPath,
+          rawTempPath,
+        ]);
+
+        if (compress.exitCode !== 0) {
+          const stderr = new TextDecoder().decode(compress.stderr ?? new Uint8Array());
+          throw new Error(`zstd fallo para ${archivePath}: ${stderr.trim()}`);
+        }
+
+        const fileBuffer = readFileSync(compressedTempPath);
+        const sha256 = createHash("sha256").update(fileBuffer).digest("hex");
+
+        const fileFd = openSync(compressedTempPath, "r");
+        fsyncSync(fileFd);
+        closeSync(fileFd);
+        renameSync(compressedTempPath, archivePath);
+
+        const dirFd = openSync(dirname(archivePath), "r");
+        fsyncSync(dirFd);
+        closeSync(dirFd);
+
+        const archiveCreatedAt = Math.floor(Date.now() / 1000);
+        const persist = this.db.transaction(() => {
+          this.db
+            .query(
+              `
+            INSERT INTO observation_archive_chunks (
+              from_ts,
+              to_ts,
+              row_count,
+              file_path,
+              sha256,
+              created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            )
+            .run(bucket.from_ts, bucket.to_ts, rows.length, archivePath, sha256, archiveCreatedAt);
+
+          const deleted = this.db
+            .query(`DELETE FROM train_observations WHERE captured_at >= ? AND captured_at <= ?`)
+            .run(bucket.from_ts, bucket.to_ts);
+
+          if (deleted.changes !== rows.length) {
+            throw new Error(
+              `delete mismatch en ${archivePath}: esperado=${rows.length} actual=${deleted.changes}`,
+            );
+          }
+        });
+        persist();
+
+        archivedChunks += 1;
+        archivedRows += rows.length;
+        deletedRows += rows.length;
+      } finally {
+        try {
+          unlinkSync(rawTempPath);
+        } catch {
+          // ignore temp cleanup errors
+        }
+
+        try {
+          unlinkSync(compressedTempPath);
+        } catch {
+          // ignore temp cleanup errors
+        }
+      }
+    }
+
+    return {
+      archivedChunks,
+      archivedRows,
+      skippedChunks,
+      deletedRows,
+    };
   }
 
   getOverview(): DashboardOverview {
@@ -880,22 +1227,190 @@ export class DB {
     }));
   }
 
+  getCorridorMeta() {
+    const now = Math.floor(Date.now() / 1000);
+    const since30d = now - 30 * 24 * 3600;
+
+    const availability = this.db
+      .query(
+        `
+      SELECT
+        COUNT(*) AS total,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN des_corridor IS NOT NULL AND TRIM(des_corridor) <> '' THEN 1
+              ELSE 0
+            END
+          ),
+          0
+        ) AS with_official
+      FROM train_observations
+      WHERE captured_at >= ?
+      `,
+      )
+      .get(since30d) as { total: number; with_official: number } | undefined;
+
+    const cutRow = this.db
+      .query(
+        `
+      WITH last_non_empty AS (
+        SELECT MAX(captured_at) AS ts
+        FROM train_observations
+        WHERE des_corridor IS NOT NULL AND TRIM(des_corridor) <> ''
+      )
+      SELECT MIN(captured_at) AS detected_missing_since
+      FROM train_observations
+      WHERE (des_corridor IS NULL OR TRIM(des_corridor) = '')
+        AND captured_at > COALESCE((SELECT ts FROM last_non_empty), -1)
+      `,
+      )
+      .get() as { detected_missing_since: number | null } | undefined;
+
+    const total = availability?.total ?? 0;
+    const withOfficial = availability?.with_official ?? 0;
+
+    return {
+      mode: "official_or_derived_axis",
+      officialAvailablePct: total > 0 ? Number(((withOfficial / total) * 100).toFixed(1)) : 0,
+      detectedMissingSince: cutRow?.detected_missing_since ?? null,
+      detectedMissingSinceIso: cutRow?.detected_missing_since
+        ? new Date(cutRow.detected_missing_since * 1000).toISOString()
+        : null,
+      samplesWindowHours: 24 * 30,
+    };
+  }
+
   getTopCorridors(limit: number) {
     return this.db
       .query(
         `
+      WITH base AS (
+        SELECT
+          t.cod_comercial,
+          t.cod_origen,
+          t.cod_destino,
+          t.des_corridor,
+          t.ult_retraso,
+          so.name AS origin_name,
+          sd.name AS destination_name
+        FROM trains_current t
+        LEFT JOIN stations so ON so.code = t.cod_origen
+        LEFT JOIN stations sd ON sd.code = t.cod_destino
+      ),
+      normalized AS (
+        SELECT
+          cod_comercial,
+          ult_retraso,
+          CASE
+            WHEN des_corridor IS NOT NULL AND TRIM(des_corridor) <> '' THEN 'official'
+            ELSE 'derived_axis'
+          END AS source,
+          CASE
+            WHEN des_corridor IS NOT NULL AND TRIM(des_corridor) <> '' THEN 'official:' || LOWER(TRIM(des_corridor))
+            ELSE
+              'axis:' ||
+              CASE
+                WHEN COALESCE(cod_origen, '') <= COALESCE(cod_destino, '')
+                  THEN COALESCE(cod_origen, '~') || '|' || COALESCE(cod_destino, '~')
+                ELSE COALESCE(cod_destino, '~') || '|' || COALESCE(cod_origen, '~')
+              END
+          END AS axis_key,
+          CASE
+            WHEN des_corridor IS NOT NULL AND TRIM(des_corridor) <> '' THEN TRIM(des_corridor)
+            ELSE
+              CASE
+                WHEN COALESCE(cod_origen, '') <= COALESCE(cod_destino, '')
+                  THEN COALESCE(origin_name, cod_origen, 'Origen desconocido') || ' ↔ ' || COALESCE(destination_name, cod_destino, 'Destino desconocido')
+                ELSE COALESCE(destination_name, cod_destino, 'Destino desconocido') || ' ↔ ' || COALESCE(origin_name, cod_origen, 'Origen desconocido')
+              END
+          END AS axis_label
+        FROM base
+      )
       SELECT
-        COALESCE(des_corridor, 'Sin corredor') AS corridor,
+        axis_key AS axisKey,
+        axis_label AS axisLabel,
+        axis_label AS corridor,
+        source,
         COUNT(*) AS train_count,
         COALESCE(ROUND(AVG(ult_retraso), 2), 0) AS avg_delay,
         COALESCE(MAX(ult_retraso), 0) AS max_delay
-      FROM trains_current
-      GROUP BY des_corridor
+      FROM normalized
+      GROUP BY source, axis_key, axis_label
       ORDER BY train_count DESC, avg_delay DESC
       LIMIT ?
       `,
       )
       .all(limit);
+  }
+
+  private getAccountabilityThresholds(hours: number) {
+    if (hours <= 24) {
+      return { minRouteObservations: 40, minTrainObservations: 20 };
+    }
+
+    if (hours <= 168) {
+      return { minRouteObservations: 200, minTrainObservations: 80 };
+    }
+
+    return { minRouteObservations: 600, minTrainObservations: 240 };
+  }
+
+  private getWorseningVs7d(until: number) {
+    const since24 = until - 24 * 3600;
+    const since7d = until - 7 * 24 * 3600;
+
+    const row = this.db
+      .query(
+        `
+      SELECT
+        COALESCE(SUM(CASE WHEN captured_at >= ? THEN 1 ELSE 0 END), 0) AS obs_24h,
+        COALESCE(SUM(CASE WHEN captured_at >= ? THEN 1 ELSE 0 END), 0) AS obs_7d,
+        COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 15 THEN 1 ELSE 0 END), 0) AS delayed_24h,
+        COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 15 THEN 1 ELSE 0 END), 0) AS delayed_7d,
+        COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 60 THEN 1 ELSE 0 END), 0) AS severe_24h,
+        COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 60 THEN 1 ELSE 0 END), 0) AS severe_7d
+      FROM train_observations
+      WHERE captured_at >= ? AND captured_at <= ?
+      `,
+      )
+      .get(since24, since7d, since24, since7d, since24, since7d, since7d, until) as
+      | {
+          obs_24h: number;
+          obs_7d: number;
+          delayed_24h: number;
+          delayed_7d: number;
+          severe_24h: number;
+          severe_7d: number;
+        }
+      | undefined;
+
+    const obs24 = row?.obs_24h ?? 0;
+    const obs7d = row?.obs_7d ?? 0;
+    const delayed24Pct = obs24 > 0 ? Number((((row?.delayed_24h ?? 0) / obs24) * 100).toFixed(1)) : 0;
+    const delayed7Pct = obs7d > 0 ? Number((((row?.delayed_7d ?? 0) / obs7d) * 100).toFixed(1)) : 0;
+    const severe24Pct = obs24 > 0 ? Number((((row?.severe_24h ?? 0) / obs24) * 100).toFixed(1)) : 0;
+    const severe7Pct = obs7d > 0 ? Number((((row?.severe_7d ?? 0) / obs7d) * 100).toFixed(1)) : 0;
+
+    const deltaDelayed15Pct = Number((delayed24Pct - delayed7Pct).toFixed(1));
+    const deltaSevere60Pct = Number((severe24Pct - severe7Pct).toFixed(1));
+
+    let trend = "flat";
+    if (deltaDelayed15Pct > 0.5 || deltaSevere60Pct > 0.3) {
+      trend = "worsening";
+    } else if (deltaDelayed15Pct < -0.5 || deltaSevere60Pct < -0.3) {
+      trend = "improving";
+    }
+
+    return {
+      trend,
+      current24hDelayed15Pct: delayed24Pct,
+      baseline7dDelayed15Pct: delayed7Pct,
+      deltaDelayed15Pct,
+      current24hSevere60Pct: severe24Pct,
+      baseline7dSevere60Pct: severe7Pct,
+      deltaSevere60Pct,
+    };
   }
 
   listTrains(args: TrainListArgs) {
@@ -1349,12 +1864,149 @@ export class DB {
     };
   }
 
+  private getCorridorAggregateRows(rangeRowsCte: string, rangeParams: number[]) {
+    return this.db
+      .query(
+        `
+      ${rangeRowsCte},
+      corridor_rows AS (
+        SELECT
+          rr.cod_comercial,
+          rr.observations,
+          rr.sum_delay,
+          rr.sum_positive_delay,
+          rr.max_delay,
+          rr.delayed_over_15_count,
+          rr.severe_count,
+          CASE
+            WHEN rr.des_corridor IS NOT NULL AND TRIM(rr.des_corridor) <> '' THEN 'official'
+            ELSE 'derived_axis'
+          END AS source,
+          CASE
+            WHEN rr.des_corridor IS NOT NULL AND TRIM(rr.des_corridor) <> '' THEN 'official:' || LOWER(TRIM(rr.des_corridor))
+            ELSE
+              'axis:' ||
+              CASE
+                WHEN COALESCE(rr.cod_origen, '') <= COALESCE(rr.cod_destino, '')
+                  THEN COALESCE(rr.cod_origen, '~') || '|' || COALESCE(rr.cod_destino, '~')
+                ELSE COALESCE(rr.cod_destino, '~') || '|' || COALESCE(rr.cod_origen, '~')
+              END
+          END AS axis_key,
+          CASE
+            WHEN rr.des_corridor IS NOT NULL AND TRIM(rr.des_corridor) <> '' THEN TRIM(rr.des_corridor)
+            ELSE
+              CASE
+                WHEN COALESCE(rr.cod_origen, '') <= COALESCE(rr.cod_destino, '')
+                  THEN COALESCE(so.name, rr.cod_origen, 'Origen desconocido') || ' ↔ ' || COALESCE(sd.name, rr.cod_destino, 'Destino desconocido')
+                ELSE COALESCE(sd.name, rr.cod_destino, 'Destino desconocido') || ' ↔ ' || COALESCE(so.name, rr.cod_origen, 'Origen desconocido')
+              END
+          END AS axis_label
+        FROM range_rows rr
+        LEFT JOIN stations so ON so.code = rr.cod_origen
+        LEFT JOIN stations sd ON sd.code = rr.cod_destino
+      ),
+      corridor_agg AS (
+        SELECT
+          source,
+          axis_key,
+          axis_label,
+          COALESCE(SUM(observations), 0) AS observations,
+          COUNT(DISTINCT cod_comercial) AS trains,
+          COALESCE(SUM(sum_positive_delay), 0) AS accumulated_delay_minutes_int,
+          CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes,
+          COALESCE(ROUND(SUM(sum_delay) / NULLIF(SUM(observations), 0), 2), 0) AS avg_delay,
+          COALESCE(MAX(max_delay), 0) AS max_delay,
+          COALESCE(ROUND(100.0 * SUM(delayed_over_15_count) / NULLIF(SUM(observations), 0), 1), 0) AS delayed_over_15_pct,
+          COALESCE(ROUND(100.0 * SUM(severe_count) / NULLIF(SUM(observations), 0), 1), 0) AS severe_pct
+        FROM corridor_rows
+        GROUP BY source, axis_key, axis_label
+      )
+      SELECT
+        source,
+        axis_key,
+        axis_label,
+        observations,
+        trains,
+        accumulated_delay_minutes_int,
+        accumulated_delay_minutes,
+        avg_delay,
+        max_delay,
+        delayed_over_15_pct,
+        severe_pct
+      FROM corridor_agg
+      `,
+      )
+      .all(...rangeParams) as Array<{
+      source: string;
+      axis_key: string;
+      axis_label: string;
+      observations: number;
+      trains: number;
+      accumulated_delay_minutes_int: number;
+      accumulated_delay_minutes: string;
+      avg_delay: number;
+      max_delay: number;
+      delayed_over_15_pct: number;
+      severe_pct: number;
+    }>;
+  }
+
+  private getRepeatOffenders(rangeRowsCte: string, rangeParams: number[], minObservations: number) {
+    return this.db
+      .query(
+        `
+      ${rangeRowsCte},
+      offender_agg AS (
+        SELECT
+          rr.cod_comercial,
+          MAX(rr.cod_product) AS cod_product,
+          MAX(rr.cod_origen) AS cod_origen,
+          MAX(rr.cod_destino) AS cod_destino,
+          COALESCE(SUM(rr.observations), 0) AS observations,
+          COALESCE(ROUND(SUM(rr.sum_delay) / NULLIF(SUM(rr.observations), 0), 2), 0) AS avg_delay,
+          COALESCE(MAX(rr.max_delay), 0) AS max_delay,
+          COALESCE(ROUND(100.0 * SUM(rr.delayed_over_15_count) / NULLIF(SUM(rr.observations), 0), 1), 0) AS delayed_over_15_pct,
+          COALESCE(ROUND(100.0 * SUM(rr.severe_count) / NULLIF(SUM(rr.observations), 0), 1), 0) AS severe_pct
+        FROM range_rows rr
+        GROUP BY rr.cod_comercial
+        HAVING SUM(rr.observations) >= ?
+      )
+      SELECT
+        oa.cod_comercial,
+        oa.cod_product,
+        oa.observations,
+        oa.avg_delay,
+        oa.max_delay,
+        oa.delayed_over_15_pct,
+        oa.severe_pct,
+        COALESCE(so.name, oa.cod_origen, 'Origen desconocido') AS origin,
+        COALESCE(sd.name, oa.cod_destino, 'Destino desconocido') AS destination
+      FROM offender_agg oa
+      LEFT JOIN stations so ON so.code = oa.cod_origen
+      LEFT JOIN stations sd ON sd.code = oa.cod_destino
+      ORDER BY oa.delayed_over_15_pct DESC, oa.severe_pct DESC, oa.observations DESC
+      LIMIT 12
+      `,
+      )
+      .all(...rangeParams, minObservations) as Array<{
+      cod_comercial: string;
+      cod_product: number;
+      observations: number;
+      avg_delay: number;
+      max_delay: number;
+      delayed_over_15_pct: number;
+      severe_pct: number;
+      origin: string;
+      destination: string;
+    }>;
+  }
+
   getHistoricalStats(hours: number) {
     const now = Math.floor(Date.now() / 1000);
     const safeHours = Math.max(24, Math.min(24 * 30, Math.trunc(hours)));
     const since = now - safeHours * 3600;
 
-    const hourlyBootstrapReady = this.getState("hourly_bootstrap_last_30d_v1");
+    const hourlyBootstrapReady = this.getState("hourly_bootstrap_last_30d_v2");
     if (!hourlyBootstrapReady) {
       return this.getHistoricalStatsByObservationRange(since, now);
     }
@@ -1362,10 +2014,14 @@ export class DB {
     return this.getHistoricalStatsByHourlyRange(since, now);
   }
 
-  getHistoricalStatsCustom(sinceEpoch: number, untilEpoch: number) {
+  getHistoricalStatsCustom(sinceEpoch: number, untilEpoch: number, options?: HistoricalStatsCustomOptions) {
     const now = Math.floor(Date.now() / 1000);
     const safeSince = Math.max(0, Math.min(sinceEpoch, untilEpoch));
     const safeUntil = Math.max(safeSince + 1, Math.min(untilEpoch, now));
+
+    if (options?.preferAggregated) {
+      return this.getHistoricalStatsByHourlyRange(safeSince, safeUntil);
+    }
 
     return this.getHistoricalStatsByObservationRange(safeSince, safeUntil);
   }
@@ -1398,6 +2054,8 @@ export class DB {
           hour_epoch,
           cod_comercial,
           cod_product,
+          cod_origen,
+          cod_destino,
           des_corridor,
           observations,
           on_time_count,
@@ -1416,6 +2074,8 @@ export class DB {
           CAST((captured_at / 3600) AS INTEGER) * 3600 AS hour_epoch,
           cod_comercial,
           MAX(cod_product) AS cod_product,
+          MAX(cod_origen) AS cod_origen,
+          MAX(cod_destino) AS cod_destino,
           MAX(des_corridor) AS des_corridor,
           COUNT(*) AS observations,
           SUM(CASE WHEN ult_retraso = 0 THEN 1 ELSE 0 END) AS on_time_count,
@@ -1499,33 +2159,53 @@ export class DB {
         }
       | undefined;
 
-    const topProblematicCorridor = this.db
-      .query(
-        `
-      ${rangeRowsCte}
-      SELECT
-        COALESCE(des_corridor, 'Sin corredor') AS corridor,
-        CAST(COALESCE(SUM(sum_positive_delay), 0) AS TEXT) AS accumulated_delay_minutes,
-        COALESCE(ROUND(SUM(sum_delay) / NULLIF(SUM(observations), 0), 2), 0) AS avg_delay,
-        COALESCE(MAX(max_delay), 0) AS max_delay,
-        COALESCE(SUM(observations), 0) AS observations,
-        COUNT(DISTINCT cod_comercial) AS trains
-      FROM range_rows
-      GROUP BY des_corridor
-      ORDER BY COALESCE(SUM(sum_positive_delay), 0) DESC, observations DESC
-      LIMIT 1
-      `,
+    const corridorAggregates = this.getCorridorAggregateRows(rangeRowsCte, rangeParams);
+    const topProblematicCorridor = corridorAggregates
+      .slice()
+      .sort(
+        (a, b) =>
+          b.accumulated_delay_minutes_int - a.accumulated_delay_minutes_int ||
+          b.observations - a.observations,
+      )[0];
+
+    const thresholds = this.getAccountabilityThresholds(safeHours);
+    const criticalRoutes = corridorAggregates
+      .filter((row) => row.observations >= thresholds.minRouteObservations)
+      .sort(
+        (a, b) =>
+          b.delayed_over_15_pct - a.delayed_over_15_pct ||
+          b.severe_pct - a.severe_pct ||
+          b.observations - a.observations,
       )
-      .get(...rangeParams) as
-      | {
-          corridor: string;
-          accumulated_delay_minutes: string;
-          avg_delay: number;
-          max_delay: number;
-          observations: number;
-          trains: number;
-        }
-      | undefined;
+      .slice(0, 12)
+      .map((row) => ({
+        axisKey: row.axis_key,
+        axisLabel: row.axis_label,
+        source: row.source,
+        observations: row.observations,
+        avgDelay: row.avg_delay,
+        maxDelay: row.max_delay,
+        delayed15Pct: row.delayed_over_15_pct,
+        severe60Pct: row.severe_pct,
+      }));
+
+    const repeatOffenders = this.getRepeatOffenders(
+      rangeRowsCte,
+      rangeParams,
+      thresholds.minTrainObservations,
+    ).map((row) => ({
+      codComercial: row.cod_comercial,
+      codProduct: row.cod_product,
+      observations: row.observations,
+      avgDelay: row.avg_delay,
+      maxDelay: row.max_delay,
+      delayed15Pct: row.delayed_over_15_pct,
+      severe60Pct: row.severe_pct,
+      origin: row.origin,
+      destination: row.destination,
+    }));
+
+    const worseningVs7d = this.getWorseningVs7d(until);
 
     const byProduct = this.db
       .query(
@@ -1614,7 +2294,10 @@ export class DB {
         : null,
       topProblematicCorridor: topProblematicCorridor
         ? {
-            corridor: topProblematicCorridor.corridor,
+            corridor: topProblematicCorridor.axis_label,
+            axisKey: topProblematicCorridor.axis_key,
+            axisLabel: topProblematicCorridor.axis_label,
+            source: topProblematicCorridor.source,
             accumulatedDelayMinutes: topProblematicCorridor.accumulated_delay_minutes,
             avgDelay: topProblematicCorridor.avg_delay,
             maxDelay: topProblematicCorridor.max_delay,
@@ -1622,6 +2305,17 @@ export class DB {
             trains: topProblematicCorridor.trains,
           }
         : null,
+      accountability: {
+        summary: {
+          delayed15Pct: pct(summaryRow?.delayed_over_15_count ?? 0),
+          severe60Pct: pct(summaryRow?.severe_count ?? 0),
+          observations: observationCount,
+          uniqueTrains: summaryRow?.unique_trains ?? 0,
+          worseningVs7d,
+        },
+        criticalRoutes,
+        repeatOffenders,
+      },
       byProduct,
       dailyTrend,
       ingestion: {
@@ -1637,6 +2331,30 @@ export class DB {
     const safeHours = Math.max(1, Math.round((until - since) / 3600));
     const sinceDay = new Date(since * 1000).toISOString().slice(0, 10);
     const untilDay = new Date(until * 1000).toISOString().slice(0, 10);
+    const rangeParams = [since, until];
+
+    const rangeRowsCte = `
+      WITH range_rows AS (
+        SELECT
+          CAST((captured_at / 3600) AS INTEGER) * 3600 AS hour_epoch,
+          cod_comercial,
+          MAX(cod_product) AS cod_product,
+          MAX(cod_origen) AS cod_origen,
+          MAX(cod_destino) AS cod_destino,
+          MAX(des_corridor) AS des_corridor,
+          COUNT(*) AS observations,
+          SUM(CASE WHEN ult_retraso = 0 THEN 1 ELSE 0 END) AS on_time_count,
+          SUM(CASE WHEN ult_retraso > 15 THEN 1 ELSE 0 END) AS delayed_over_15_count,
+          SUM(CASE WHEN ult_retraso > 60 THEN 1 ELSE 0 END) AS severe_count,
+          SUM(CASE WHEN accesible = 1 THEN 1 ELSE 0 END) AS accessible_count,
+          SUM(ult_retraso) AS sum_delay,
+          SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END) AS sum_positive_delay,
+          MAX(ult_retraso) AS max_delay
+        FROM train_observations
+        WHERE captured_at >= ? AND captured_at <= ?
+        GROUP BY hour_epoch, cod_comercial
+      )
+    `;
 
     const summaryRow = this.db
       .query(
@@ -1705,33 +2423,53 @@ export class DB {
         }
       | undefined;
 
-    const topProblematicCorridor = this.db
-      .query(
-        `
-      SELECT
-        COALESCE(des_corridor, 'Sin corredor') AS corridor,
-        CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
-        COALESCE(ROUND(AVG(ult_retraso), 2), 0) AS avg_delay,
-        COALESCE(MAX(ult_retraso), 0) AS max_delay,
-        COUNT(*) AS observations,
-        COUNT(DISTINCT cod_comercial) AS trains
-      FROM train_observations
-      WHERE captured_at >= ? AND captured_at <= ?
-      GROUP BY des_corridor
-      ORDER BY COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC, observations DESC
-      LIMIT 1
-      `,
+    const corridorAggregates = this.getCorridorAggregateRows(rangeRowsCte, rangeParams);
+    const topProblematicCorridor = corridorAggregates
+      .slice()
+      .sort(
+        (a, b) =>
+          b.accumulated_delay_minutes_int - a.accumulated_delay_minutes_int ||
+          b.observations - a.observations,
+      )[0];
+
+    const thresholds = this.getAccountabilityThresholds(safeHours);
+    const criticalRoutes = corridorAggregates
+      .filter((row) => row.observations >= thresholds.minRouteObservations)
+      .sort(
+        (a, b) =>
+          b.delayed_over_15_pct - a.delayed_over_15_pct ||
+          b.severe_pct - a.severe_pct ||
+          b.observations - a.observations,
       )
-      .get(since, until) as
-      | {
-          corridor: string;
-          accumulated_delay_minutes: string;
-          avg_delay: number;
-          max_delay: number;
-          observations: number;
-          trains: number;
-        }
-      | undefined;
+      .slice(0, 12)
+      .map((row) => ({
+        axisKey: row.axis_key,
+        axisLabel: row.axis_label,
+        source: row.source,
+        observations: row.observations,
+        avgDelay: row.avg_delay,
+        maxDelay: row.max_delay,
+        delayed15Pct: row.delayed_over_15_pct,
+        severe60Pct: row.severe_pct,
+      }));
+
+    const repeatOffenders = this.getRepeatOffenders(
+      rangeRowsCte,
+      rangeParams,
+      thresholds.minTrainObservations,
+    ).map((row) => ({
+      codComercial: row.cod_comercial,
+      codProduct: row.cod_product,
+      observations: row.observations,
+      avgDelay: row.avg_delay,
+      maxDelay: row.max_delay,
+      delayed15Pct: row.delayed_over_15_pct,
+      severe60Pct: row.severe_pct,
+      origin: row.origin,
+      destination: row.destination,
+    }));
+
+    const worseningVs7d = this.getWorseningVs7d(until);
 
     const byProduct = this.db
       .query(
@@ -1820,7 +2558,10 @@ export class DB {
         : null,
       topProblematicCorridor: topProblematicCorridor
         ? {
-            corridor: topProblematicCorridor.corridor,
+            corridor: topProblematicCorridor.axis_label,
+            axisKey: topProblematicCorridor.axis_key,
+            axisLabel: topProblematicCorridor.axis_label,
+            source: topProblematicCorridor.source,
             accumulatedDelayMinutes: topProblematicCorridor.accumulated_delay_minutes,
             avgDelay: topProblematicCorridor.avg_delay,
             maxDelay: topProblematicCorridor.max_delay,
@@ -1828,6 +2569,17 @@ export class DB {
             trains: topProblematicCorridor.trains,
           }
         : null,
+      accountability: {
+        summary: {
+          delayed15Pct: pct(summaryRow?.delayed_over_15_count ?? 0),
+          severe60Pct: pct(summaryRow?.severe_count ?? 0),
+          observations: observationCount,
+          uniqueTrains: summaryRow?.unique_trains ?? 0,
+          worseningVs7d,
+        },
+        criticalRoutes,
+        repeatOffenders,
+      },
       byProduct,
       dailyTrend,
       ingestion: {

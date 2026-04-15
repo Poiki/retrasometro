@@ -133,10 +133,22 @@ const createSchema = async (client: Client) => {
       CONSTRAINT uq_observations UNIQUE(cod_comercial, captured_at, source)
     );
 
+    CREATE TABLE IF NOT EXISTS observation_archive_chunks (
+      id BIGSERIAL PRIMARY KEY,
+      from_ts BIGINT NOT NULL,
+      to_ts BIGINT NOT NULL,
+      row_count INTEGER NOT NULL,
+      file_path TEXT NOT NULL UNIQUE,
+      sha256 TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS train_hourly_train_stats (
       hour_epoch BIGINT NOT NULL,
       cod_comercial TEXT NOT NULL,
       cod_product INTEGER NOT NULL,
+      cod_origen TEXT,
+      cod_destino TEXT,
       des_corridor TEXT,
       observations INTEGER NOT NULL DEFAULT 0,
       on_time_count INTEGER NOT NULL DEFAULT 0,
@@ -180,10 +192,11 @@ const createSchema = async (client: Client) => {
     CREATE INDEX IF NOT EXISTS idx_snapshots_time ON train_snapshots(captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_observations_train_time ON train_observations(cod_comercial, captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_observations_time ON train_observations(captured_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_observations_batch ON train_observations(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_archive_chunks_range ON observation_archive_chunks(from_ts, to_ts);
     CREATE INDEX IF NOT EXISTS idx_hourly_time ON train_hourly_train_stats(hour_epoch DESC);
     CREATE INDEX IF NOT EXISTS idx_hourly_product_time ON train_hourly_train_stats(cod_product, hour_epoch DESC);
     CREATE INDEX IF NOT EXISTS idx_hourly_corridor_time ON train_hourly_train_stats(des_corridor, hour_epoch DESC);
+    CREATE INDEX IF NOT EXISTS idx_hourly_axis_time ON train_hourly_train_stats(cod_origen, cod_destino, hour_epoch DESC);
     CREATE INDEX IF NOT EXISTS idx_daily_day ON train_daily_stats(day DESC);
     CREATE INDEX IF NOT EXISTS idx_daily_product_day ON train_daily_stats(cod_product, day DESC);
   `);
@@ -193,6 +206,7 @@ const truncateTarget = async (client: Client) => {
   await client.query(`
     TRUNCATE TABLE
       train_observations,
+      observation_archive_chunks,
       train_hourly_train_stats,
       train_snapshots,
       train_daily_stats,
@@ -219,6 +233,11 @@ const sqliteHasTable = (sourceDb: Database, tableName: string): boolean => {
     .get(tableName) as { ok: number } | undefined;
 
   return Boolean(row?.ok);
+};
+
+const sqliteHasColumn = (sourceDb: Database, tableName: string, columnName: string): boolean => {
+  const rows = sourceDb.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
 };
 
 const insertRows = async (
@@ -258,6 +277,7 @@ const setSequences = async (client: Client) => {
     SELECT setval(pg_get_serial_sequence('ingestion_batches','id'), COALESCE((SELECT MAX(id) FROM ingestion_batches), 1), true);
     SELECT setval(pg_get_serial_sequence('train_snapshots','id'), COALESCE((SELECT MAX(id) FROM train_snapshots), 1), true);
     SELECT setval(pg_get_serial_sequence('train_observations','id'), COALESCE((SELECT MAX(id) FROM train_observations), 1), true);
+    SELECT setval(pg_get_serial_sequence('observation_archive_chunks','id'), COALESCE((SELECT MAX(id) FROM observation_archive_chunks), 1), true);
   `);
 };
 
@@ -383,24 +403,28 @@ const run = async () => {
       "id",
     );
     if (sqliteHasTable(sqlite, "train_hourly_train_stats")) {
+      const hourlyColumns = [
+        "hour_epoch",
+        "cod_comercial",
+        "cod_product",
+        ...(sqliteHasColumn(sqlite, "train_hourly_train_stats", "cod_origen") ? ["cod_origen"] : []),
+        ...(sqliteHasColumn(sqlite, "train_hourly_train_stats", "cod_destino") ? ["cod_destino"] : []),
+        "des_corridor",
+        "observations",
+        "on_time_count",
+        "delayed_over_15_count",
+        "severe_count",
+        "accessible_count",
+        "sum_delay",
+        "sum_positive_delay",
+        "max_delay",
+      ];
+
       await copyTable(
         pg,
         sqlite,
         "train_hourly_train_stats",
-        [
-          "hour_epoch",
-          "cod_comercial",
-          "cod_product",
-          "des_corridor",
-          "observations",
-          "on_time_count",
-          "delayed_over_15_count",
-          "severe_count",
-          "accessible_count",
-          "sum_delay",
-          "sum_positive_delay",
-          "max_delay",
-        ],
+        hourlyColumns,
         "hour_epoch, cod_comercial",
       );
     } else {
@@ -432,6 +456,17 @@ const run = async () => {
       ],
       "day, cod_comercial",
     );
+    if (sqliteHasTable(sqlite, "observation_archive_chunks")) {
+      await copyTable(
+        pg,
+        sqlite,
+        "observation_archive_chunks",
+        ["id", "from_ts", "to_ts", "row_count", "file_path", "sha256", "created_at"],
+        "id",
+      );
+    } else {
+      console.log("[migrate] observation_archive_chunks: tabla no existe en sqlite, omitida");
+    }
     await copyTable(
       pg,
       sqlite,

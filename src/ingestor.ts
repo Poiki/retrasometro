@@ -55,8 +55,8 @@ export class RenfeIngestor {
 
   async start() {
     await this.refreshStations();
-    await this.runOnce();
-    await this.recoverHistoricalData();
+    void this.runOnce();
+    void this.recoverHistoricalData();
     void this.bootstrapHourlyAggregates();
 
     this.runTimer = setInterval(() => {
@@ -247,12 +247,10 @@ export class RenfeIngestor {
       this.runCounter += 1;
 
       if (this.onAfterSuccessfulRun) {
-        try {
-          await this.onAfterSuccessfulRun(nowEpoch);
-        } catch (error) {
+        void Promise.resolve(this.onAfterSuccessfulRun(nowEpoch)).catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`[display-cache] error ${message}`);
-        }
+        });
       }
 
       console.log(
@@ -325,24 +323,82 @@ export class RenfeIngestor {
     const staleCutoff = nowEpoch - config.staleTrainSeconds;
     const removed = this.db.deleteStaleCurrentTrains(staleCutoff);
 
-    if (this.runCounter % config.compactEveryRuns === 0) {
+    if (this.runCounter > 0 && this.runCounter % config.compactEveryRuns === 0) {
       const snapshotsCutoff = nowEpoch - config.snapshotRetentionHours * 3600;
       const runsCutoff = nowEpoch - 30 * 24 * 3600;
 
       const deletedSnapshots = this.db.cleanupSnapshots(snapshotsCutoff);
-      this.db.cleanupIngestionRuns(runsCutoff);
+      const deletedRuns = this.db.cleanupIngestionRuns(runsCutoff);
+      let archivedObservationRows = 0;
+      let archivedObservationChunks = 0;
+      let skippedArchiveChunks = 0;
+      let deletedObservations = 0;
+      let archiveFailed = false;
+      let deletedHourlyRows = 0;
+      let deletedDailyRows = 0;
+      let deletedBatches = 0;
 
-      if (config.historyRetentionDays > 0) {
-        const historyCutoff = nowEpoch - config.historyRetentionDays * 24 * 3600;
-        this.db.cleanupObservations(historyCutoff);
-        this.db.cleanupHourlyStats(historyCutoff);
-        this.db.cleanupBatches(historyCutoff);
+      if (config.observationRetentionDays > 0) {
+        const historyCutoff = nowEpoch - config.observationRetentionDays * 24 * 3600;
+
+        if (config.archiveEnabled) {
+          try {
+            const archiveResult = this.db.archiveObservationsBefore(
+              historyCutoff,
+              config.archiveDir,
+              config.archiveZstdLevel,
+            );
+            archivedObservationRows = archiveResult.archivedRows;
+            archivedObservationChunks = archiveResult.archivedChunks;
+            skippedArchiveChunks = archiveResult.skippedChunks;
+            deletedObservations = archiveResult.deletedRows;
+          } catch (error) {
+            archiveFailed = true;
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[archive] fallo al archivar observaciones: ${message}`);
+          }
+        } else {
+          deletedObservations = this.db.cleanupObservations(historyCutoff);
+        }
+
+        if (config.archiveEnabled && archiveFailed) {
+          console.warn(
+            "[archive] purga de train_observations omitida por seguridad al fallar el archivado",
+          );
+        }
       }
 
-      this.db.optimize();
+      if (config.hourlyRetentionDays > 0) {
+        const hourlyCutoff = nowEpoch - config.hourlyRetentionDays * 24 * 3600;
+        deletedHourlyRows = this.db.cleanupHourlyStats(hourlyCutoff);
+      }
+
+      if (config.dailyRetentionDays > 0) {
+        const dailyCutoff = nowEpoch - config.dailyRetentionDays * 24 * 3600;
+        deletedDailyRows = this.db.cleanupDailyStats(dailyCutoff);
+      }
+
+      if (config.batchRetentionDays > 0) {
+        const batchCutoff = nowEpoch - config.batchRetentionDays * 24 * 3600;
+        deletedBatches = this.db.cleanupBatches(batchCutoff);
+      }
+
+      const checkpointMode = this.db.optimize(config.walCheckpointTruncateBytes);
 
       if (deletedSnapshots > 0) {
         console.log(`[compact] snapshots eliminados=${deletedSnapshots}`);
+      }
+
+      if (archivedObservationRows > 0 || deletedObservations > 0) {
+        console.log(
+          `[compact] observations archivadas=${archivedObservationRows} chunks=${archivedObservationChunks} skipped_chunks=${skippedArchiveChunks} borradas=${deletedObservations}`,
+        );
+      }
+
+      if (deletedHourlyRows > 0 || deletedDailyRows > 0 || deletedBatches > 0 || deletedRuns > 0) {
+        console.log(
+          `[compact] hourly=${deletedHourlyRows} daily=${deletedDailyRows} batches=${deletedBatches} runs=${deletedRuns} checkpoint=${checkpointMode}`,
+        );
       }
     }
 
@@ -350,6 +406,7 @@ export class RenfeIngestor {
   }
 
   private async recoverHistoricalData() {
+    await Promise.resolve();
     const sinceEpoch = toEpochSeconds() - config.recoveryLookbackHours * 3600;
     const recovered = this.db.recoverObservationsFromSnapshots(sinceEpoch);
 
@@ -363,7 +420,7 @@ export class RenfeIngestor {
   private async bootstrapHourlyAggregates() {
     await Promise.resolve();
 
-    const stateKey = "hourly_bootstrap_last_30d_v1";
+    const stateKey = "hourly_bootstrap_last_30d_v2";
     const alreadyBootstrapped = this.db.getState(stateKey);
     if (alreadyBootstrapped) {
       return;
@@ -377,59 +434,94 @@ export class RenfeIngestor {
   }
 
   async refreshStations() {
-    try {
-      const response = await fetch(config.stationsEndpoint, {
-        signal: AbortSignal.timeout(config.fetchTimeoutMs),
-      });
+    const endpointCandidates = [
+      config.stationsSupplementalEndpoint.trim(),
+      config.stationsEndpoint.trim(),
+    ].filter((endpoint, index, list) => endpoint.length > 0 && list.indexOf(endpoint) === index);
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+    const merged = new Map<string, StationRecord>();
 
-      const data = (await response.json()) as {
-        features?: Array<{
-          properties?: Record<string, unknown>;
-          geometry?: { coordinates?: [number, number] };
-        }>;
-      };
-
-      if (!Array.isArray(data.features)) {
-        throw new Error("GeoJSON de estaciones sin features");
-      }
-
-      const stations: StationRecord[] = [];
-
-      for (const feature of data.features) {
-        const props = feature.properties ?? {};
-        const code = this.asCode(props.CODIGO);
-        if (!code) {
-          continue;
+    for (const endpoint of endpointCandidates) {
+      try {
+        const stations = await this.fetchStationsFromEndpoint(endpoint);
+        for (const station of stations) {
+          merged.set(station.code, station);
         }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[stations] source=${endpoint} error ${message}`);
+      }
+    }
 
-        const coordinates = feature.geometry?.coordinates;
-        stations.push({
-          code,
-          name: this.asText(props.NOMBRE),
-          locality: this.asText(props.LOCALIDAD),
-          province: this.asText(props.PROV),
-          accessible: this.asFlag(props.ACCESIBLE),
-          attended: this.asFlag(props.ATENDO),
-          correspondences: this.asText(props.CERC),
-          level: this.asText(props.NIVEL),
-          lat: Array.isArray(coordinates) ? this.asNumber(coordinates[1]) : null,
-          lon: Array.isArray(coordinates) ? this.asNumber(coordinates[0]) : null,
-        });
+    if (merged.size === 0) {
+      console.error("[stations] error no se pudo actualizar desde ninguna fuente");
+      return;
+    }
+
+    const nowEpoch = toEpochSeconds();
+    const stations = [...merged.values()];
+    this.db.upsertStations(stations, nowEpoch);
+    this.db.setState("stations_last_refresh_at", String(nowEpoch));
+
+    console.log(`[stations] actualizadas ${stations.length}`);
+  }
+
+  private async fetchStationsFromEndpoint(endpoint: string): Promise<StationRecord[]> {
+    const response = await fetch(endpoint, {
+      signal: AbortSignal.timeout(config.fetchTimeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      features?: Array<{
+        properties?: Record<string, unknown>;
+        geometry?: { coordinates?: [number, number] };
+      }>;
+    };
+
+    if (!Array.isArray(data.features)) {
+      throw new Error("GeoJSON de estaciones sin features");
+    }
+
+    const stations: StationRecord[] = [];
+
+    for (const feature of data.features) {
+      const props = feature.properties ?? {};
+      const code = this.asCode(props.CODIGO ?? props.CODIGO_ESTACION);
+      if (!code) {
+        continue;
       }
 
-      const nowEpoch = toEpochSeconds();
-      this.db.upsertStations(stations, nowEpoch);
-      this.db.setState("stations_last_refresh_at", String(nowEpoch));
+      const coordinates = feature.geometry?.coordinates;
+      const latFromCoords = Array.isArray(coordinates) ? this.asNumber(coordinates[1]) : null;
+      const lonFromCoords = Array.isArray(coordinates) ? this.asNumber(coordinates[0]) : null;
+      const correspondences = [
+        this.asCorrespondenceText(props.CERC),
+        this.asCorrespondenceText(props.LINEAS),
+        this.asCorrespondenceText(props.COR_BUS),
+        this.asCorrespondenceText(props.COR_METRO),
+      ]
+        .filter((item): item is string => Boolean(item))
+        .join(" | ");
 
-      console.log(`[stations] actualizadas ${stations.length}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[stations] error ${message}`);
+      stations.push({
+        code,
+        name: this.asText(props.NOMBRE ?? props.NOMBRE_ESTACION),
+        locality: this.asText(props.LOCALIDAD ?? props.NOMBRE_NUCLEO),
+        province: this.asText(props.PROV),
+        accessible: this.asFlag(props.ACCESIBLE ?? props.ACCESIBILIDAD),
+        attended: this.asFlag(props.ATENDO),
+        correspondences: correspondences.length > 0 ? correspondences : null,
+        level: this.asText(props.NIVEL),
+        lat: latFromCoords ?? this.asNumber(props.LATITUD),
+        lon: lonFromCoords ?? this.asNumber(props.LONGITUD),
+      });
     }
+
+    return stations;
   }
 
   private asCode(value: unknown): string | null {
@@ -489,7 +581,7 @@ export class RenfeIngestor {
 
     if (typeof value === "string") {
       const normalized = value.trim().toLowerCase();
-      if (["1", "s", "si", "yes", "true"].includes(normalized)) {
+      if (["1", "s", "si", "yes", "true", "accesible", "accessible"].includes(normalized)) {
         return 1;
       }
       if (["0", "n", "no", "false"].includes(normalized)) {
@@ -498,5 +590,19 @@ export class RenfeIngestor {
     }
 
     return null;
+  }
+
+  private asCorrespondenceText(value: unknown): string | null {
+    const parsed = this.asText(value);
+    if (!parsed) {
+      return null;
+    }
+
+    const normalized = parsed.trim().toLowerCase();
+    if (["0", "1", "s", "n", "si", "no", "yes", "true", "false"].includes(normalized)) {
+      return null;
+    }
+
+    return parsed;
   }
 }

@@ -1,7 +1,14 @@
 export interface RawTrain {
   codComercial?: string;
+  tripId?: string;
+  codTren?: string;
+  codLinea?: string;
+  nucleo?: string | number;
   codEstAnt?: string;
+  codEstAct?: string;
   codEstSig?: string;
+  codEstOrig?: string;
+  codEstDest?: string;
   horaLlegadaSigEst?: string;
   codProduct?: number;
   codOrigen?: string;
@@ -9,10 +16,13 @@ export interface RawTrain {
   desCorridor?: string;
   accesible?: boolean;
   ultRetraso?: string | number;
+  retrasoMin?: string | number;
   latitud?: number;
   longitud?: number;
   time?: number;
   p?: string;
+  via?: string;
+  nextVia?: string;
   mat?: string;
 }
 

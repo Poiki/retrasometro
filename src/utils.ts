@@ -9,6 +9,17 @@ const toNullableString = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const pickNullableString = (...values: unknown[]): string | null => {
+  for (const value of values) {
+    const normalized = toNullableString(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+};
+
 const toNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -23,7 +34,15 @@ const toNumber = (value: unknown): number | null => {
 };
 
 export const normalizeTrain = (input: RawTrain): NormalizedTrain | null => {
-  const codComercial = toNullableString(input.codComercial);
+  const fallbackTrainCode = pickNullableString(input.codTren);
+  const fallbackLine = pickNullableString(input.codLinea);
+  const fallbackNucleo = pickNullableString(input.nucleo);
+  const fallbackCommercialCode =
+    fallbackTrainCode && (fallbackLine || fallbackNucleo)
+      ? [fallbackTrainCode, fallbackLine, fallbackNucleo].filter(Boolean).join(":")
+      : fallbackTrainCode;
+  const codComercial =
+    pickNullableString(input.codComercial, input.tripId) ?? fallbackCommercialCode;
   const latitud = toNumber(input.latitud);
   const longitud = toNumber(input.longitud);
 
@@ -31,25 +50,28 @@ export const normalizeTrain = (input: RawTrain): NormalizedTrain | null => {
     return null;
   }
 
-  const codProduct = toNumber(input.codProduct) ?? -1;
-  const delay = toNumber(input.ultRetraso) ?? 0;
+  const hasCommuterHints = Boolean(
+    pickNullableString(input.codLinea, input.nucleo, input.codEstOrig, input.codEstDest),
+  );
+  const codProduct = toNumber(input.codProduct) ?? (hasCommuterHints ? 21 : -1);
+  const delay = toNumber(input.ultRetraso) ?? toNumber(input.retrasoMin) ?? 0;
 
   return {
     codComercial,
-    codEstAnt: toNullableString(input.codEstAnt),
-    codEstSig: toNullableString(input.codEstSig),
-    horaLlegadaSigEst: toNullableString(input.horaLlegadaSigEst),
+    codEstAnt: pickNullableString(input.codEstAnt, input.codEstAct),
+    codEstSig: pickNullableString(input.codEstSig, input.codEstAct),
+    horaLlegadaSigEst: pickNullableString(input.horaLlegadaSigEst),
     codProduct,
-    codOrigen: toNullableString(input.codOrigen),
-    codDestino: toNullableString(input.codDestino),
-    desCorridor: toNullableString(input.desCorridor),
+    codOrigen: pickNullableString(input.codOrigen, input.codEstOrig),
+    codDestino: pickNullableString(input.codDestino, input.codEstDest),
+    desCorridor: pickNullableString(input.desCorridor),
     accesible: input.accesible ? 1 : 0,
     ultRetraso: Math.trunc(delay),
     latitud,
     longitud,
     gpsTime: toNumber(input.time),
-    p: toNullableString(input.p),
-    mat: toNullableString(input.mat),
+    p: pickNullableString(input.p, input.via, input.nextVia),
+    mat: pickNullableString(input.mat),
   };
 };
 

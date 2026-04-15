@@ -1,4 +1,5 @@
 import { join, normalize, extname } from "node:path";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import { config } from "./config";
 import { DB } from "./db";
 import { RenfeIngestor } from "./ingestor";
@@ -15,6 +16,108 @@ const json = (body: unknown, init?: ResponseInit) => {
       "cache-control": "no-store",
     },
     ...init,
+  });
+};
+
+const isCompressibleType = (contentType: string | null): boolean => {
+  if (!contentType) {
+    return false;
+  }
+
+  const type = contentType.toLowerCase();
+  return (
+    type.includes("application/json") ||
+    type.includes("text/") ||
+    type.includes("application/javascript") ||
+    type.includes("text/css")
+  );
+};
+
+const pickCompressionEncoding = (acceptEncoding: string | null): "br" | "gzip" | null => {
+  if (!acceptEncoding) {
+    return null;
+  }
+
+  const lower = acceptEncoding.toLowerCase();
+  if (lower.includes("br")) {
+    return "br";
+  }
+
+  if (lower.includes("gzip")) {
+    return "gzip";
+  }
+
+  return null;
+};
+
+const maybeCompressResponse = async (request: Request, response: Response): Promise<Response> => {
+  if (!config.httpCompressionEnabled || request.method === "HEAD") {
+    return response;
+  }
+
+  if (response.status < 200 || response.status >= 300 || response.body === null) {
+    return response;
+  }
+
+  if (response.headers.has("content-encoding")) {
+    return response;
+  }
+
+  if (!isCompressibleType(response.headers.get("content-type"))) {
+    return response;
+  }
+
+  const encoding = pickCompressionEncoding(request.headers.get("accept-encoding"));
+  if (!encoding) {
+    return response;
+  }
+
+  const bodyBuffer = Buffer.from(await response.arrayBuffer());
+  if (bodyBuffer.byteLength < config.httpCompressionMinBytes) {
+    return new Response(bodyBuffer, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  const compressedBody =
+    encoding === "br"
+      ? brotliCompressSync(bodyBuffer, {
+          params: {
+            [zlibConstants.BROTLI_PARAM_QUALITY]: Math.max(1, Math.min(11, config.httpBrotliLevel)),
+          },
+        })
+      : gzipSync(bodyBuffer, {
+          level: Math.max(1, Math.min(9, config.httpGzipLevel)),
+        });
+
+  if (compressedBody.byteLength >= bodyBuffer.byteLength) {
+    return new Response(bodyBuffer, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  const headers = new Headers(response.headers);
+  const previousVary = headers.get("vary");
+  const nextVary = previousVary
+    ? previousVary
+        .split(",")
+        .map((entry) => entry.trim().toLowerCase())
+        .includes("accept-encoding")
+      ? previousVary
+      : `${previousVary}, Accept-Encoding`
+    : "Accept-Encoding";
+  headers.set("content-encoding", encoding);
+  headers.set("content-length", String(compressedBody.byteLength));
+  headers.set("vary", nextVary);
+
+  return new Response(compressedBody, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
   });
 };
 
@@ -142,12 +245,11 @@ export const startServer = (
     port: config.port,
     async fetch(request) {
       const url = new URL(request.url);
+      const response = url.pathname.startsWith("/api/")
+        ? await handleApi(request, url, db, ingestor, dashboardPresetCache, apiKeyManager)
+        : await serveStatic(url.pathname);
 
-      if (url.pathname.startsWith("/api/")) {
-        return handleApi(request, url, db, ingestor, dashboardPresetCache, apiKeyManager);
-      }
-
-      return serveStatic(url.pathname);
+      return maybeCompressResponse(request, response);
     },
   });
 
@@ -190,7 +292,9 @@ const handleApi = async (
     const sampleToday = db.getTodayAggregate();
     const sampleHistory = db.getHistoricalStats(24);
     const sampleTopCorridors = db.getTopCorridors(3);
+    const sampleCorridorMeta = db.getCorridorMeta();
     const sampleCoverage = db.getHistoryCoverage(48, Math.floor(config.pollingIntervalMs / 1000));
+    const sampleStorage = db.getObservationArchiveStorage();
     const sampleTrains = withProductLabels(
       db.listTrains({
         query: null,
@@ -237,6 +341,11 @@ const handleApi = async (
           ageSeconds: 12,
           customRange: false,
         },
+        historyPrecision: {
+          mode: "raw_detail",
+          rawWindowDays: config.observationRetentionDays,
+          archivesAvailable: config.archiveEnabled,
+        },
         overview: {
           ...sampleOverview,
           lastSeenAtIso: toIso(sampleOverview.lastSeenAt),
@@ -244,6 +353,7 @@ const handleApi = async (
         delayBuckets: sampleDelayBuckets,
         byProduct: sampleProducts,
         topCorridors: sampleTopCorridors,
+        corridorMeta: sampleCorridorMeta,
         today: sampleToday,
         historical: {
           hours: 24,
@@ -257,6 +367,7 @@ const handleApi = async (
               }
             : null,
           topProblematicCorridor: sampleHistory.topProblematicCorridor,
+          accountability: sampleHistory.accountability,
         },
       },
       trains: {
@@ -280,12 +391,14 @@ const handleApi = async (
         delayBuckets: sampleDelayBuckets,
         today: sampleToday,
         historyCoverage: sampleCoverage,
+        storage: sampleStorage,
         trainsCurrent: sampleTrains,
       },
       historyCoverage: {
         ok: true,
         language: lang,
         report: sampleCoverage,
+        storage: sampleStorage,
       },
       errorRateLimit: {
         ok: false,
@@ -667,6 +780,10 @@ const handleProtectedApi = async (
     const rawFrom = parseEpochOrDate(url.searchParams.get("historyFrom"));
     const rawTo = parseEpochOrDate(url.searchParams.get("historyTo"));
     const hasCustomRange = rawFrom !== null || rawTo !== null;
+    const rawWindowDays = Math.max(0, Math.trunc(config.observationRetentionDays));
+    const rawWindowSeconds = rawWindowDays > 0 ? rawWindowDays * 24 * 3600 : 0;
+    const rawWindowStart = rawWindowSeconds > 0 ? nowEpoch - rawWindowSeconds : null;
+    let historyPrecisionMode: "raw_detail" | "aggregated_only" | "mixed" = "raw_detail";
 
     const overview = db.getOverview();
     const delayBuckets = db.getDelayBuckets();
@@ -681,7 +798,8 @@ const handleProtectedApi = async (
       };
     });
 
-    const topCorridors = db.getTopCorridors(8);
+    let topCorridors = db.getTopCorridors(8);
+    let corridorMeta = db.getCorridorMeta();
     const typeInsights = db.getTodayTypeInsights();
     let historicalRaw;
     let cacheMeta: {
@@ -693,10 +811,24 @@ const handleProtectedApi = async (
     };
 
     if (hasCustomRange) {
-      historicalRaw = db.getHistoricalStatsCustom(
-        rawFrom ?? Math.max(0, (rawTo ?? nowEpoch) - historyHours * 3600),
-        rawTo ?? nowEpoch,
-      );
+      const customSince = rawFrom ?? Math.max(0, (rawTo ?? nowEpoch) - historyHours * 3600);
+      const customUntil = rawTo ?? nowEpoch;
+      const safeSince = Math.max(0, Math.min(customSince, customUntil));
+      const safeUntil = Math.max(safeSince + 1, Math.min(customUntil, nowEpoch));
+
+      if (rawWindowStart !== null) {
+        if (safeUntil <= rawWindowStart) {
+          historyPrecisionMode = "aggregated_only";
+        } else if (safeSince < rawWindowStart) {
+          historyPrecisionMode = "mixed";
+        } else {
+          historyPrecisionMode = "raw_detail";
+        }
+      }
+
+      historicalRaw = db.getHistoricalStatsCustom(safeSince, safeUntil, {
+        preferAggregated: historyPrecisionMode !== "raw_detail",
+      });
       cacheMeta = {
         source: "live",
         windowHours: historyHours,
@@ -706,8 +838,16 @@ const handleProtectedApi = async (
       };
     } else if (dashboardPresetCache.isPresetHours(historyHours)) {
       const cached = await dashboardPresetCache.read(historyHours);
-      if (cached) {
+      const cachedHasAccountability = Boolean(
+        (cached?.historical as { accountability?: unknown } | undefined)?.accountability,
+      );
+      if (cached && cachedHasAccountability) {
         historicalRaw = cached.historical;
+        topCorridors = Array.isArray(cached.topCorridors) ? cached.topCorridors : db.getTopCorridors(8);
+        corridorMeta = cached.corridorMeta ?? db.getCorridorMeta();
+        if (rawWindowStart !== null && historyHours * 3600 > rawWindowSeconds) {
+          historyPrecisionMode = "aggregated_only";
+        }
         cacheMeta = {
           source: "cache",
           windowHours: historyHours,
@@ -716,8 +856,13 @@ const handleProtectedApi = async (
           customRange: false,
         };
       } else {
-        historicalRaw = db.getHistoricalStats(historyHours);
-        await dashboardPresetCache.generate(historyHours, nowEpoch);
+        const regenerated = await dashboardPresetCache.generate(historyHours, nowEpoch);
+        historicalRaw = regenerated.historical;
+        topCorridors = regenerated.topCorridors ?? db.getTopCorridors(8);
+        corridorMeta = regenerated.corridorMeta ?? db.getCorridorMeta();
+        if (rawWindowStart !== null && historyHours * 3600 > rawWindowSeconds) {
+          historyPrecisionMode = "aggregated_only";
+        }
         cacheMeta = {
           source: "live",
           windowHours: historyHours,
@@ -728,6 +873,9 @@ const handleProtectedApi = async (
       }
     } else {
       historicalRaw = db.getHistoricalStats(historyHours);
+      if (rawWindowStart !== null && historyHours * 3600 > rawWindowSeconds) {
+        historyPrecisionMode = "aggregated_only";
+      }
       cacheMeta = {
         source: "live",
         windowHours: historyHours,
@@ -749,6 +897,50 @@ const handleProtectedApi = async (
         };
       },
     );
+    const historicalAccountabilityRaw = historicalRaw.accountability ?? {
+      summary: {
+        delayed15Pct: 0,
+        severe60Pct: 0,
+        observations: historicalRaw.summary?.observations ?? 0,
+        uniqueTrains: historicalRaw.summary?.uniqueTrains ?? 0,
+        worseningVs7d: {
+          trend: "flat",
+          current24hDelayed15Pct: 0,
+          baseline7dDelayed15Pct: 0,
+          deltaDelayed15Pct: 0,
+          current24hSevere60Pct: 0,
+          baseline7dSevere60Pct: 0,
+          deltaSevere60Pct: 0,
+        },
+      },
+      criticalRoutes: [],
+      repeatOffenders: [],
+    };
+    const accountabilityRepeatOffenders = Array.isArray(historicalAccountabilityRaw.repeatOffenders)
+      ? historicalAccountabilityRaw.repeatOffenders.map(
+          (item: {
+            codProduct?: number;
+          }) => {
+            const codProduct = Number(item.codProduct ?? 0);
+            const productNames = getProductNames(codProduct);
+
+            return {
+              ...item,
+              productName: getProductName(codProduct, lang),
+              productNameEs: productNames.es,
+              productNameEn: productNames.en,
+            };
+          },
+        )
+      : [];
+
+    const historicalAccountability = {
+      summary: historicalAccountabilityRaw.summary,
+      criticalRoutes: Array.isArray(historicalAccountabilityRaw.criticalRoutes)
+        ? historicalAccountabilityRaw.criticalRoutes
+        : [],
+      repeatOffenders: accountabilityRepeatOffenders,
+    };
     const topDelayed = db.listTrains({
       query: null,
       minDelay: null,
@@ -761,6 +953,12 @@ const handleProtectedApi = async (
       language: lang,
       generatedAt: new Date().toISOString(),
       cacheMeta,
+      historyPrecision: {
+        mode: historyPrecisionMode,
+        rawWindowDays,
+        archivesAvailable: config.archiveEnabled,
+      },
+      corridorMeta,
       overview: {
         ...overview,
         lastSeenAtIso: toIso(overview.lastSeenAt),
@@ -804,6 +1002,7 @@ const handleProtectedApi = async (
             }
           : null,
         topProblematicCorridor: historicalRaw.topProblematicCorridor,
+        accountability: historicalAccountability,
         byProduct: historicalByProduct,
         dailyTrend: historicalRaw.dailyTrend,
         ingestion: historicalRaw.ingestion,
@@ -888,6 +1087,8 @@ const handleProtectedApi = async (
       offset: 0,
     });
 
+    const storage = db.getObservationArchiveStorage();
+
     return json({
       ok: true,
       language: lang,
@@ -906,6 +1107,7 @@ const handleProtectedApi = async (
       delayBuckets: db.getDelayBuckets(),
       today: db.getTodayAggregate(),
       historyCoverage: db.getHistoryCoverage(48, Math.floor(config.pollingIntervalMs / 1000)),
+      storage,
       recentRuns: db.getRecentRuns(30),
       trainsCurrent: withProductLabels(trains as Array<{ cod_product: number }>, lang),
       rawPayload: cachedPayload,
@@ -919,6 +1121,7 @@ const handleProtectedApi = async (
       ok: true,
       language: lang,
       report: db.getHistoryCoverage(hours, Math.floor(config.pollingIntervalMs / 1000)),
+      storage: db.getObservationArchiveStorage(),
     });
   }
 

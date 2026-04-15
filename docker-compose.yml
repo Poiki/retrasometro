@@ -6,7 +6,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3011:3000"
     environment:
       PORT: 3000
       DB_PATH: /app/data/renfe.db
@@ -21,10 +21,23 @@ services:
       API_KEY_TTL_SECONDS: 900
       API_RATE_LIMIT_MS: 1000
       RAW_MAX_TRAINS: 5000
-      HISTORY_RETENTION_DAYS: 0
+      OBSERVATION_RETENTION_DAYS: 14
+      HOURLY_RETENTION_DAYS: 400
+      DAILY_RETENTION_DAYS: 0
+      BATCH_RETENTION_DAYS: 14
+      ARCHIVE_ENABLED: 1
+      ARCHIVE_DIR: /app/data/archive/observations
+      ARCHIVE_ZSTD_LEVEL: 3
+      WAL_CHECKPOINT_TRUNCATE_BYTES: 67108864
+      HTTP_COMPRESSION_ENABLED: 1
+      HTTP_COMPRESSION_MIN_BYTES: 1024
+      HTTP_GZIP_LEVEL: 5
+      HTTP_BROTLI_LEVEL: 4
+      HISTORY_RETENTION_DAYS: 14
       RECOVERY_LOOKBACK_HOURS: 72
       RENFE_ENDPOINTS: https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json
       STATIONS_ENDPOINT: https://tiempo-real.largorecorrido.renfe.com/data/estaciones.geojson
+      STATIONS_SUPPLEMENTAL_ENDPOINT: https://tiempo-real.renfe.com/data/estaciones.geojson?v=1
       CACHE_FILE: /app/data/cache/flotaLD.latest.json
       BOOTSTRAP_SQLITE_PATH: /seed-data/renfe.db
       BOOTSTRAP_CACHE_PATH: /seed-data/cache/flotaLD.latest.json

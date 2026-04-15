@@ -7,12 +7,16 @@ export const DASHBOARD_PRESET_HOURS = [24, 168, 720] as const;
 
 type PresetHours = (typeof DASHBOARD_PRESET_HOURS)[number];
 type HistoricalPayload = ReturnType<DB["getHistoricalStats"]>;
+type TopCorridorsPayload = ReturnType<DB["getTopCorridors"]>;
+type CorridorMetaPayload = ReturnType<DB["getCorridorMeta"]>;
 
 export interface DashboardHistoricalCacheEntry {
   historyHours: PresetHours;
   generatedAt: string;
   generatedAtEpoch: number;
   historical: HistoricalPayload;
+  topCorridors?: TopCorridorsPayload;
+  corridorMeta?: CorridorMetaPayload;
 }
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
@@ -52,11 +56,15 @@ export class DashboardPresetCache {
 
   async generate(hours: PresetHours, generatedAtEpoch = nowEpoch()): Promise<DashboardHistoricalCacheEntry> {
     const historical = this.db.getHistoricalStats(hours);
+    const topCorridors = this.db.getTopCorridors(8);
+    const corridorMeta = this.db.getCorridorMeta();
     const entry: DashboardHistoricalCacheEntry = {
       historyHours: hours,
       generatedAt: new Date(generatedAtEpoch * 1000).toISOString(),
       generatedAtEpoch,
       historical,
+      topCorridors,
+      corridorMeta,
     };
 
     const filePath = this.getFilePath(hours);
