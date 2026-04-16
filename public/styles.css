@@ -496,6 +496,16 @@ a:hover {
   gap: 12px;
 }
 
+.trains-panel > .panel-header,
+.corridors-panel > .panel-header {
+  align-items: flex-start;
+}
+
+.trains-panel > .panel-header h2,
+.corridors-panel > .panel-header h2 {
+  margin-top: 6px;
+}
+
 .panel-header.wrap {
   flex-wrap: wrap;
 }
@@ -583,6 +593,12 @@ a:hover {
   padding: 12px;
 }
 
+#accountability-routes-title,
+#accountability-trains-title {
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -594,7 +610,7 @@ a:hover {
   min-height: 40px;
   border: 1px solid var(--cds-border-subtle);
   border-bottom-width: 2px;
-  border-bottom-color: transparent;
+  border-bottom-color: var(--cds-border-strong);
   background: var(--cds-field);
   color: var(--cds-text-primary);
   font-family: inherit;
@@ -606,6 +622,11 @@ a:hover {
 
 .panel-search {
   min-width: 220px;
+}
+
+.panel-search:hover,
+.filters input:hover {
+  border-bottom-color: var(--cds-link-primary);
 }
 
 .panel-search:focus-visible,
@@ -772,6 +793,7 @@ a:hover {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  margin-top: 2px;
 }
 
 .filters input {
