@@ -305,6 +305,7 @@ a:hover {
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--cds-text-primary);
+  color-scheme: light;
   font: inherit;
   line-height: 1;
   height: 34px;
@@ -314,6 +315,22 @@ a:hover {
 .control-field select:focus-visible {
   outline: 0;
   border-bottom-color: var(--cds-focus);
+}
+
+.control-field select option,
+.control-field select optgroup {
+  color: #161616;
+  background: #ffffff;
+}
+
+[data-theme="dark"] .control-field select {
+  color-scheme: dark;
+}
+
+[data-theme="dark"] .control-field select option,
+[data-theme="dark"] .control-field select optgroup {
+  color: #f4f4f4;
+  background: #262626;
 }
 
 .status-pill {
@@ -1058,22 +1075,22 @@ tr.skeleton-row td {
 
 .api-endpoints {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .endpoint-card {
-  background: var(--cds-layer-02);
+  background: var(--cds-layer-01);
   border: 1px solid var(--cds-border-subtle);
-  padding: 12px;
+  padding: 14px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .endpoint-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .method-tag,
@@ -1114,10 +1131,10 @@ tr.skeleton-row td {
 
 .endpoint-path {
   border: 1px solid var(--cds-border-subtle);
-  background: var(--cds-layer-01);
-  padding: 4px 8px;
+  background: var(--cds-layer-02);
+  padding: 6px 10px;
   font-family: "IBM Plex Mono", Menlo, Courier, monospace;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   letter-spacing: 0.16px;
 }
 
@@ -1150,17 +1167,30 @@ tr.skeleton-row td {
   font-size: 0.875rem;
   line-height: 1.29;
   letter-spacing: 0.16px;
+  margin-top: -2px;
 }
 
 .endpoint-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .endpoint-col {
   display: grid;
+  gap: 10px;
+}
+
+.endpoint-group {
+  display: grid;
   gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--cds-border-subtle);
+  background: var(--cds-layer-02);
+}
+
+.endpoint-group-response {
+  min-height: 100%;
 }
 
 .endpoint-subtitle {
@@ -1179,7 +1209,8 @@ tr.skeleton-row td {
 .param-row {
   background: var(--cds-layer-01);
   border: 1px solid var(--cds-border-subtle);
-  padding: 8px;
+  border-left: 3px solid var(--cds-link-primary);
+  padding: 9px;
   display: grid;
   gap: 6px;
 }
@@ -1222,8 +1253,8 @@ tr.skeleton-row td {
 
 .param-desc {
   color: var(--cds-text-secondary);
-  font-size: 0.75rem;
-  line-height: 1.33;
+  font-size: 0.78rem;
+  line-height: 1.4;
   letter-spacing: 0.16px;
 }
 
@@ -1238,6 +1269,31 @@ tr.skeleton-row td {
   line-height: 1.2;
   padding: 3px 7px;
   overflow-wrap: anywhere;
+}
+
+.endpoint-card .endpoint-code,
+.endpoint-card .endpoint-json {
+  border-color: var(--cds-border-strong);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+[data-theme="dark"] .endpoint-card .endpoint-code,
+[data-theme="dark"] .endpoint-card .endpoint-json {
+  background: #111318;
+}
+
+.endpoint-card pre::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.endpoint-card pre::-webkit-scrollbar-track {
+  background: var(--cds-layer-02);
+}
+
+.endpoint-card pre::-webkit-scrollbar-thumb {
+  background: var(--cds-border-strong);
+  border: 2px solid var(--cds-layer-02);
 }
 
 .endpoint-empty {

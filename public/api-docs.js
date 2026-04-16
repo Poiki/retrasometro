@@ -278,19 +278,27 @@ const renderEndpoints = () => {
 
           <div class="endpoint-columns">
             <div class="endpoint-col">
-              <div class="endpoint-subtitle">${escapeHtml(t("parameters"))}</div>
-              <div class="param-list">${paramsHtml}</div>
+              <section class="endpoint-group">
+                <div class="endpoint-subtitle">${escapeHtml(t("parameters"))}</div>
+                <div class="param-list">${paramsHtml}</div>
+              </section>
 
-              <div class="endpoint-subtitle">${escapeHtml(t("headers"))}</div>
-              <div class="param-list">${headersHtml}</div>
+              <section class="endpoint-group">
+                <div class="endpoint-subtitle">${escapeHtml(t("headers"))}</div>
+                <div class="param-list">${headersHtml}</div>
+              </section>
 
-              <div class="endpoint-subtitle">${escapeHtml(t("sampleRequest"))}</div>
-              <pre class="endpoint-code">${escapeHtml(buildCurlSnippet(endpoint))}</pre>
+              <section class="endpoint-group">
+                <div class="endpoint-subtitle">${escapeHtml(t("sampleRequest"))}</div>
+                <pre class="endpoint-code">${escapeHtml(buildCurlSnippet(endpoint))}</pre>
+              </section>
             </div>
 
             <div class="endpoint-col">
-              <div class="endpoint-subtitle">${escapeHtml(t("sampleResponse"))}</div>
-              <pre class="endpoint-json">${escapeHtml(JSON.stringify(sampleResponse, null, 2))}</pre>
+              <section class="endpoint-group endpoint-group-response">
+                <div class="endpoint-subtitle">${escapeHtml(t("sampleResponse"))}</div>
+                <pre class="endpoint-json">${escapeHtml(JSON.stringify(sampleResponse, null, 2))}</pre>
+              </section>
             </div>
           </div>
         </article>
