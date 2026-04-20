@@ -23,7 +23,13 @@ import type {
   StationRecord,
 } from "./types";
 import { getProductName } from "./products";
-import { getDelayBucketFlags } from "./utils";
+import {
+  buildCorridorDirectionKey,
+  buildServiceInstanceId,
+  clampNumber,
+  getDelayBucketFlags,
+  getOperationalDayMadrid,
+} from "./utils";
 
 interface UpsertCurrentArgs {
   train: NormalizedTrain;
@@ -69,6 +75,125 @@ interface ArchiveObservationsResult {
   skippedChunks: number;
   deletedRows: number;
 }
+
+interface OpsObservationRow {
+  cod_comercial: string;
+  captured_at: number;
+  cod_product: number;
+  cod_origen: string | null;
+  cod_destino: string | null;
+  des_corridor: string | null;
+  ult_retraso: number;
+  source: string;
+}
+
+interface OpsObservationCursorRow extends OpsObservationRow {
+  id: number;
+}
+
+interface OpsServiceState {
+  lastLiveTs: number | null;
+  lastLiveDelay: number | null;
+}
+
+interface OpsHourlyAccumulator {
+  hourEpoch: number;
+  serviceInstanceId: string;
+  operationalDay: string;
+  codComercial: string;
+  codProduct: number;
+  codOrigen: string | null;
+  codDestino: string | null;
+  corridorDirection: string;
+  observationsTotal: number;
+  observationsLive: number;
+  observationsRecovered: number;
+  observationsRepeated: number;
+  maxDelayLive: number;
+  maxDelayAll: number;
+  tmTotalSec: number;
+  tmGt0Sec: number;
+  tmGt15Sec: number;
+  tmGt60Sec: number;
+  firstTs: number;
+  lastTs: number;
+  firstLiveTs: number | null;
+  lastLiveTs: number | null;
+  firstLiveDelay: number | null;
+  lastLiveDelay: number | null;
+  officialCorridorObs: number;
+  syntheticIdObs: number;
+  originStationMatchObs: number;
+  destinationStationMatchObs: number;
+}
+
+interface OpsCacheSummary {
+  p15: number;
+  p60: number;
+  otp5: number;
+  tm: {
+    gt0Sec: number;
+    gt15Sec: number;
+    gt60Sec: number;
+    gt0Hours: number;
+    gt15Hours: number;
+    gt60Hours: number;
+  };
+  servicesObserved: number;
+  kmObserved: number;
+}
+
+interface OpsRankItem {
+  key: string;
+  label: string;
+  services: number;
+  p15: number;
+  p60: number;
+  p95PeakDelay: number;
+  tm60Sec: number;
+  tm60Per100ServicesSec: number;
+  tm60Per10000KmSec: number;
+  kmObserved: number;
+}
+
+interface OpsMetricsPayload {
+  windowHours: number;
+  generatedAt: string;
+  generatedAtEpoch: number;
+  summary: OpsCacheSummary;
+  rankings: {
+    corridorDirection: {
+      risk: OpsRankItem[];
+      severity: OpsRankItem[];
+      load: OpsRankItem[];
+    };
+    product: {
+      risk: OpsRankItem[];
+      severity: OpsRankItem[];
+      load: OpsRankItem[];
+    };
+  };
+  confidence: {
+    freshnessSec: number | null;
+    pctLive: number;
+    pctRecovered: number;
+    pctRepeated: number;
+    precisionMode: "aggregated_only";
+    pctOfficialCorridor: number;
+    pctOriginStationMatch: number;
+    pctDestinationStationMatch: number;
+    pctSyntheticId: number;
+  };
+}
+
+const OPS_BACKFILL_STATUS_KEY = "ops_backfill_status_v1";
+const OPS_BACKFILL_CHUNK_CURSOR_KEY = "ops_backfill_chunk_cursor_v1";
+const OPS_LIVE_CURSOR_KEY = "ops_live_cursor_v1";
+const OPS_BACKFILL_MAX_OBS_ID_KEY = "ops_backfill_max_obs_id_v1";
+const OPS_BACKFILL_ARCHIVE_CUTOFF_TS_KEY = "ops_backfill_archive_cutoff_ts_v1";
+const OPS_BACKFILL_STATUS_ARCHIVES = "archives";
+const OPS_BACKFILL_STATUS_LIVE = "live";
+const OPS_BACKFILL_STATUS_COMPLETED = "completed";
 
 export class DB {
   private readonly db: Database;
@@ -269,6 +394,48 @@ export class DB {
       );
       CREATE INDEX IF NOT EXISTS idx_daily_day ON train_daily_stats(day DESC);
       CREATE INDEX IF NOT EXISTS idx_daily_product_day ON train_daily_stats(cod_product, day DESC);
+
+      CREATE TABLE IF NOT EXISTS ops_service_hourly (
+        service_instance_id TEXT NOT NULL,
+        hour_epoch INTEGER NOT NULL,
+        operational_day TEXT NOT NULL,
+        cod_comercial TEXT NOT NULL,
+        cod_product INTEGER NOT NULL,
+        cod_origen TEXT,
+        cod_destino TEXT,
+        corridor_direction TEXT NOT NULL,
+        observations_total INTEGER NOT NULL DEFAULT 0,
+        observations_live INTEGER NOT NULL DEFAULT 0,
+        observations_recovered INTEGER NOT NULL DEFAULT 0,
+        observations_repeated INTEGER NOT NULL DEFAULT 0,
+        max_delay_live INTEGER NOT NULL DEFAULT 0,
+        max_delay_all INTEGER NOT NULL DEFAULT 0,
+        tm_total_sec INTEGER NOT NULL DEFAULT 0,
+        tm_gt0_sec INTEGER NOT NULL DEFAULT 0,
+        tm_gt15_sec INTEGER NOT NULL DEFAULT 0,
+        tm_gt60_sec INTEGER NOT NULL DEFAULT 0,
+        first_ts INTEGER NOT NULL,
+        last_ts INTEGER NOT NULL,
+        first_live_ts INTEGER,
+        last_live_ts INTEGER,
+        first_live_delay INTEGER,
+        last_live_delay INTEGER,
+        official_corridor_obs INTEGER NOT NULL DEFAULT 0,
+        synthetic_id_obs INTEGER NOT NULL DEFAULT 0,
+        origin_station_match_obs INTEGER NOT NULL DEFAULT 0,
+        destination_station_match_obs INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(service_instance_id, hour_epoch)
+      );
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_time ON ops_service_hourly(hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_direction_time ON ops_service_hourly(corridor_direction, hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_product_time ON ops_service_hourly(cod_product, hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_operational_day ON ops_service_hourly(operational_day DESC);
+
+      CREATE TABLE IF NOT EXISTS ops_materialization_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -276,6 +443,32 @@ export class DB {
     const alterStatements = [
       `ALTER TABLE train_hourly_train_stats ADD COLUMN cod_origen TEXT`,
       `ALTER TABLE train_hourly_train_stats ADD COLUMN cod_destino TEXT`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN operational_day TEXT`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN cod_comercial TEXT`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN cod_product INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN cod_origen TEXT`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN cod_destino TEXT`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN corridor_direction TEXT`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN observations_total INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN observations_live INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN observations_recovered INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN observations_repeated INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN max_delay_live INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN max_delay_all INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN tm_total_sec INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN tm_gt0_sec INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN tm_gt15_sec INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN tm_gt60_sec INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN first_ts INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN last_ts INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN first_live_ts INTEGER`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN last_live_ts INTEGER`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN first_live_delay INTEGER`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN last_live_delay INTEGER`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN official_corridor_obs INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN synthetic_id_obs INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN origin_station_match_obs INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE ops_service_hourly ADD COLUMN destination_station_match_obs INTEGER NOT NULL DEFAULT 0`,
     ];
 
     for (const statement of alterStatements) {
@@ -289,6 +482,18 @@ export class DB {
     this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_hourly_axis_time ON train_hourly_train_stats(cod_origen, cod_destino, hour_epoch DESC);`,
     );
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_ops_hourly_time ON ops_service_hourly(hour_epoch DESC);`,
+    );
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_ops_hourly_direction_time ON ops_service_hourly(corridor_direction, hour_epoch DESC);`,
+    );
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_ops_hourly_product_time ON ops_service_hourly(cod_product, hour_epoch DESC);`,
+    );
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_ops_hourly_operational_day ON ops_service_hourly(operational_day DESC);`,
+    );
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS observation_archive_chunks (
@@ -301,6 +506,13 @@ export class DB {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_archive_chunks_range ON observation_archive_chunks(from_ts, to_ts);
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ops_materialization_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     try {
@@ -335,6 +547,1099 @@ export class DB {
       `,
       )
       .run(key, value, now);
+  }
+
+  private getOpsState(key: string): string | null {
+    const row = this.db
+      .query(`SELECT value FROM ops_materialization_state WHERE key = ?`)
+      .get(key) as { value: string } | undefined;
+
+    return row?.value ?? null;
+  }
+
+  private setOpsState(key: string, value: string) {
+    const now = Math.floor(Date.now() / 1000);
+    this.db
+      .query(
+        `
+      INSERT INTO ops_materialization_state (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+      `,
+      )
+      .run(key, value, now);
+  }
+
+  private getOpsStateInt(key: string, fallback = 0): number {
+    const raw = this.getOpsState(key);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+  }
+
+  private getOpsBackfillStatus():
+    | typeof OPS_BACKFILL_STATUS_ARCHIVES
+    | typeof OPS_BACKFILL_STATUS_LIVE
+    | typeof OPS_BACKFILL_STATUS_COMPLETED {
+    const raw = this.getOpsState(OPS_BACKFILL_STATUS_KEY);
+    if (raw === OPS_BACKFILL_STATUS_LIVE) {
+      return OPS_BACKFILL_STATUS_LIVE;
+    }
+
+    if (raw === OPS_BACKFILL_STATUS_COMPLETED) {
+      return OPS_BACKFILL_STATUS_COMPLETED;
+    }
+
+    return OPS_BACKFILL_STATUS_ARCHIVES;
+  }
+
+  private ensureOpsBackfillInitialized() {
+    const currentStatus = this.getOpsState(OPS_BACKFILL_STATUS_KEY);
+    if (currentStatus) {
+      if (!this.getOpsState(OPS_BACKFILL_CHUNK_CURSOR_KEY)) {
+        this.setOpsState(OPS_BACKFILL_CHUNK_CURSOR_KEY, "0");
+      }
+
+      if (!this.getOpsState(OPS_LIVE_CURSOR_KEY)) {
+        this.setOpsState(OPS_LIVE_CURSOR_KEY, "0");
+      }
+      if (!this.getOpsState(OPS_BACKFILL_ARCHIVE_CUTOFF_TS_KEY)) {
+        this.setOpsState(
+          OPS_BACKFILL_ARCHIVE_CUTOFF_TS_KEY,
+          String(Math.floor(Date.now() / 1000)),
+        );
+      }
+      return;
+    }
+
+    this.setOpsState(OPS_BACKFILL_STATUS_KEY, OPS_BACKFILL_STATUS_ARCHIVES);
+    this.setOpsState(OPS_BACKFILL_CHUNK_CURSOR_KEY, "0");
+    this.setOpsState(OPS_LIVE_CURSOR_KEY, "0");
+    this.setOpsState(
+      OPS_BACKFILL_ARCHIVE_CUTOFF_TS_KEY,
+      String(Math.floor(Date.now() / 1000)),
+    );
+  }
+
+  private isSyntheticServiceId(codComercial: string): boolean {
+    return !/^\d{5}$/.test(codComercial);
+  }
+
+  private hasOfficialCorridor(value: string | null): boolean {
+    return Boolean(value && value.trim().length > 0);
+  }
+
+  private buildOpsHourlyAccumulator(
+    row: OpsObservationRow,
+    serviceInstanceId: string,
+    operationalDay: string,
+    corridorDirection: string,
+  ): OpsHourlyAccumulator {
+    return {
+      hourEpoch: Math.floor(row.captured_at / 3600) * 3600,
+      serviceInstanceId,
+      operationalDay,
+      codComercial: row.cod_comercial,
+      codProduct: row.cod_product,
+      codOrigen: row.cod_origen,
+      codDestino: row.cod_destino,
+      corridorDirection,
+      observationsTotal: 0,
+      observationsLive: 0,
+      observationsRecovered: 0,
+      observationsRepeated: 0,
+      maxDelayLive: Number.NEGATIVE_INFINITY,
+      maxDelayAll: Number.NEGATIVE_INFINITY,
+      tmTotalSec: 0,
+      tmGt0Sec: 0,
+      tmGt15Sec: 0,
+      tmGt60Sec: 0,
+      firstTs: row.captured_at,
+      lastTs: row.captured_at,
+      firstLiveTs: null,
+      lastLiveTs: null,
+      firstLiveDelay: null,
+      lastLiveDelay: null,
+      officialCorridorObs: 0,
+      syntheticIdObs: 0,
+      originStationMatchObs: 0,
+      destinationStationMatchObs: 0,
+    };
+  }
+
+  private loadStationCodeSet(codes: string[]): Set<string> {
+    const trimmed = [...new Set(codes.map((code) => code.trim()).filter((code) => code.length > 0))];
+    if (trimmed.length === 0) {
+      return new Set();
+    }
+
+    const found = new Set<string>();
+    const chunkSize = 400;
+
+    for (let index = 0; index < trimmed.length; index += chunkSize) {
+      const chunk = trimmed.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.db
+        .query(`SELECT code FROM stations WHERE code IN (${placeholders})`)
+        .all(...chunk) as Array<{ code: string }>;
+
+      for (const row of rows) {
+        found.add(row.code);
+      }
+    }
+
+    return found;
+  }
+
+  private loadStationNameMap(codes: string[]): Map<string, string> {
+    const trimmed = [...new Set(codes.map((code) => code.trim()).filter((code) => code.length > 0))];
+    const result = new Map<string, string>();
+    if (trimmed.length === 0) {
+      return result;
+    }
+
+    const chunkSize = 400;
+    for (let index = 0; index < trimmed.length; index += chunkSize) {
+      const chunk = trimmed.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.db
+        .query(`SELECT code, name FROM stations WHERE code IN (${placeholders})`)
+        .all(...chunk) as Array<{ code: string; name: string | null }>;
+
+      for (const row of rows) {
+        if (row.name && row.name.trim().length > 0) {
+          result.set(row.code, row.name.trim());
+        }
+      }
+    }
+
+    return result;
+  }
+
+  private loadOpsServiceStates(serviceInstanceIds: string[]): Map<string, OpsServiceState> {
+    const uniqueIds = [...new Set(serviceInstanceIds.filter((id) => id.length > 0))];
+    const output = new Map<string, OpsServiceState>();
+    if (uniqueIds.length === 0) {
+      return output;
+    }
+
+    const chunkSize = 250;
+    for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+      const chunk = uniqueIds.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.db
+        .query(
+          `
+        SELECT
+          service_instance_id,
+          MAX(last_live_ts) AS last_live_ts,
+          (
+            SELECT osh2.last_live_delay
+            FROM ops_service_hourly osh2
+            WHERE osh2.service_instance_id = osh.service_instance_id
+              AND osh2.last_live_ts IS NOT NULL
+            ORDER BY osh2.last_live_ts DESC
+            LIMIT 1
+          ) AS last_live_delay
+        FROM ops_service_hourly osh
+        WHERE service_instance_id IN (${placeholders})
+        GROUP BY service_instance_id
+        `,
+        )
+        .all(...chunk) as Array<{
+        service_instance_id: string;
+        last_live_ts: number | null;
+        last_live_delay: number | null;
+      }>;
+
+      for (const row of rows) {
+        output.set(row.service_instance_id, {
+          lastLiveTs: row.last_live_ts,
+          lastLiveDelay: row.last_live_delay,
+        });
+      }
+    }
+
+    return output;
+  }
+
+  private materializeOpsRows(rows: OpsObservationRow[]) {
+    const sortedRows = rows
+      .slice()
+      .sort((left, right) => left.captured_at - right.captured_at || left.cod_comercial.localeCompare(right.cod_comercial));
+
+    const serviceIds: string[] = [];
+    const originDestinationCodes: string[] = [];
+    const rowMeta = sortedRows.map((row) => {
+      const operationalDay = getOperationalDayMadrid(row.captured_at, 4);
+      const serviceInstanceId = buildServiceInstanceId(
+        row.cod_comercial,
+        operationalDay,
+        row.cod_origen,
+        row.cod_destino,
+      );
+      const corridorDirection = buildCorridorDirectionKey(row.cod_origen, row.cod_destino);
+      serviceIds.push(serviceInstanceId);
+      if (row.cod_origen) {
+        originDestinationCodes.push(row.cod_origen);
+      }
+      if (row.cod_destino) {
+        originDestinationCodes.push(row.cod_destino);
+      }
+
+      return {
+        row,
+        operationalDay,
+        serviceInstanceId,
+        corridorDirection,
+      };
+    });
+
+    const stateMap = this.loadOpsServiceStates(serviceIds);
+    const stationCodes = this.loadStationCodeSet(originDestinationCodes);
+    const accumulators = new Map<string, OpsHourlyAccumulator>();
+
+    for (const item of rowMeta) {
+      const { row, serviceInstanceId, operationalDay, corridorDirection } = item;
+      const hourEpoch = Math.floor(row.captured_at / 3600) * 3600;
+      const accumulatorKey = `${serviceInstanceId}|${hourEpoch}`;
+
+      let accumulator = accumulators.get(accumulatorKey);
+      if (!accumulator) {
+        accumulator = this.buildOpsHourlyAccumulator(
+          row,
+          serviceInstanceId,
+          operationalDay,
+          corridorDirection,
+        );
+        accumulators.set(accumulatorKey, accumulator);
+      }
+
+      const currentState = stateMap.get(serviceInstanceId) ?? {
+        lastLiveTs: null,
+        lastLiveDelay: null,
+      };
+      const isRecovered = row.source === "recovered_snapshot";
+      const isRepeated = row.source === "live_repeated_provider_ts";
+      const isLive = row.source === "live";
+      const isLiveLike = isLive || isRepeated;
+
+      accumulator.observationsTotal += 1;
+      if (isLive) {
+        accumulator.observationsLive += 1;
+      } else if (isRepeated) {
+        accumulator.observationsRepeated += 1;
+      } else if (isRecovered) {
+        accumulator.observationsRecovered += 1;
+      }
+
+      accumulator.maxDelayAll = Math.max(accumulator.maxDelayAll, row.ult_retraso);
+      accumulator.firstTs = Math.min(accumulator.firstTs, row.captured_at);
+      accumulator.lastTs = Math.max(accumulator.lastTs, row.captured_at);
+      accumulator.codProduct = row.cod_product;
+      accumulator.codOrigen = row.cod_origen;
+      accumulator.codDestino = row.cod_destino;
+
+      if (isLiveLike) {
+        const rawDt =
+          currentState.lastLiveTs === null ? 1 : row.captured_at - currentState.lastLiveTs;
+        const dt = clampNumber(rawDt, 1, 180);
+        accumulator.tmTotalSec += dt;
+        if (row.ult_retraso > 0) {
+          accumulator.tmGt0Sec += dt;
+        }
+        if (row.ult_retraso > 15) {
+          accumulator.tmGt15Sec += dt;
+        }
+        if (row.ult_retraso > 60) {
+          accumulator.tmGt60Sec += dt;
+        }
+
+        accumulator.maxDelayLive = Math.max(accumulator.maxDelayLive, row.ult_retraso);
+        if (accumulator.firstLiveTs === null || row.captured_at < accumulator.firstLiveTs) {
+          accumulator.firstLiveTs = row.captured_at;
+          accumulator.firstLiveDelay = row.ult_retraso;
+        }
+        if (accumulator.lastLiveTs === null || row.captured_at >= accumulator.lastLiveTs) {
+          accumulator.lastLiveTs = row.captured_at;
+          accumulator.lastLiveDelay = row.ult_retraso;
+        }
+
+        currentState.lastLiveTs = row.captured_at;
+        currentState.lastLiveDelay = row.ult_retraso;
+        stateMap.set(serviceInstanceId, currentState);
+      }
+
+      if (this.hasOfficialCorridor(row.des_corridor)) {
+        accumulator.officialCorridorObs += 1;
+      }
+      if (this.isSyntheticServiceId(row.cod_comercial)) {
+        accumulator.syntheticIdObs += 1;
+      }
+      if (row.cod_origen && stationCodes.has(row.cod_origen)) {
+        accumulator.originStationMatchObs += 1;
+      }
+      if (row.cod_destino && stationCodes.has(row.cod_destino)) {
+        accumulator.destinationStationMatchObs += 1;
+      }
+    }
+
+    const normalizedAccumulators = [...accumulators.values()].map((item) => ({
+      ...item,
+      maxDelayAll: Number.isFinite(item.maxDelayAll) ? item.maxDelayAll : 0,
+      maxDelayLive: Number.isFinite(item.maxDelayLive) ? item.maxDelayLive : 0,
+    }));
+
+    return {
+      accumulators: normalizedAccumulators,
+      servicesUpdated: stateMap.size,
+    };
+  }
+
+  private persistOpsHourlyAccumulators(
+    accumulators: OpsHourlyAccumulator[],
+    stateUpdates: Array<{ key: string; value: string }>,
+  ) {
+    const run = this.db.transaction(() => {
+      if (accumulators.length > 0) {
+        const query = this.db.query(
+          `
+        INSERT INTO ops_service_hourly (
+          service_instance_id,
+          hour_epoch,
+          operational_day,
+          cod_comercial,
+          cod_product,
+          cod_origen,
+          cod_destino,
+          corridor_direction,
+          observations_total,
+          observations_live,
+          observations_recovered,
+          observations_repeated,
+          max_delay_live,
+          max_delay_all,
+          tm_total_sec,
+          tm_gt0_sec,
+          tm_gt15_sec,
+          tm_gt60_sec,
+          first_ts,
+          last_ts,
+          first_live_ts,
+          last_live_ts,
+          first_live_delay,
+          last_live_delay,
+          official_corridor_obs,
+          synthetic_id_obs,
+          origin_station_match_obs,
+          destination_station_match_obs
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(service_instance_id, hour_epoch) DO UPDATE SET
+          operational_day = excluded.operational_day,
+          cod_comercial = excluded.cod_comercial,
+          cod_product = excluded.cod_product,
+          cod_origen = excluded.cod_origen,
+          cod_destino = excluded.cod_destino,
+          corridor_direction = excluded.corridor_direction,
+          observations_total = ops_service_hourly.observations_total + excluded.observations_total,
+          observations_live = ops_service_hourly.observations_live + excluded.observations_live,
+          observations_recovered = ops_service_hourly.observations_recovered + excluded.observations_recovered,
+          observations_repeated = ops_service_hourly.observations_repeated + excluded.observations_repeated,
+          max_delay_live = MAX(ops_service_hourly.max_delay_live, excluded.max_delay_live),
+          max_delay_all = MAX(ops_service_hourly.max_delay_all, excluded.max_delay_all),
+          tm_total_sec = ops_service_hourly.tm_total_sec + excluded.tm_total_sec,
+          tm_gt0_sec = ops_service_hourly.tm_gt0_sec + excluded.tm_gt0_sec,
+          tm_gt15_sec = ops_service_hourly.tm_gt15_sec + excluded.tm_gt15_sec,
+          tm_gt60_sec = ops_service_hourly.tm_gt60_sec + excluded.tm_gt60_sec,
+          first_ts = MIN(ops_service_hourly.first_ts, excluded.first_ts),
+          last_ts = MAX(ops_service_hourly.last_ts, excluded.last_ts),
+          first_live_ts = CASE
+            WHEN ops_service_hourly.first_live_ts IS NULL THEN excluded.first_live_ts
+            WHEN excluded.first_live_ts IS NULL THEN ops_service_hourly.first_live_ts
+            ELSE MIN(ops_service_hourly.first_live_ts, excluded.first_live_ts)
+          END,
+          last_live_ts = CASE
+            WHEN ops_service_hourly.last_live_ts IS NULL THEN excluded.last_live_ts
+            WHEN excluded.last_live_ts IS NULL THEN ops_service_hourly.last_live_ts
+            ELSE MAX(ops_service_hourly.last_live_ts, excluded.last_live_ts)
+          END,
+          first_live_delay = CASE
+            WHEN excluded.first_live_ts IS NULL THEN ops_service_hourly.first_live_delay
+            WHEN ops_service_hourly.first_live_ts IS NULL THEN excluded.first_live_delay
+            WHEN excluded.first_live_ts < ops_service_hourly.first_live_ts THEN excluded.first_live_delay
+            ELSE ops_service_hourly.first_live_delay
+          END,
+          last_live_delay = CASE
+            WHEN excluded.last_live_ts IS NULL THEN ops_service_hourly.last_live_delay
+            WHEN ops_service_hourly.last_live_ts IS NULL THEN excluded.last_live_delay
+            WHEN excluded.last_live_ts >= ops_service_hourly.last_live_ts THEN excluded.last_live_delay
+            ELSE ops_service_hourly.last_live_delay
+          END,
+          official_corridor_obs = ops_service_hourly.official_corridor_obs + excluded.official_corridor_obs,
+          synthetic_id_obs = ops_service_hourly.synthetic_id_obs + excluded.synthetic_id_obs,
+          origin_station_match_obs = ops_service_hourly.origin_station_match_obs + excluded.origin_station_match_obs,
+          destination_station_match_obs =
+            ops_service_hourly.destination_station_match_obs + excluded.destination_station_match_obs
+        `,
+        );
+
+        for (const item of accumulators) {
+          query.run(
+            item.serviceInstanceId,
+            item.hourEpoch,
+            item.operationalDay,
+            item.codComercial,
+            item.codProduct,
+            item.codOrigen,
+            item.codDestino,
+            item.corridorDirection,
+            item.observationsTotal,
+            item.observationsLive,
+            item.observationsRecovered,
+            item.observationsRepeated,
+            item.maxDelayLive,
+            item.maxDelayAll,
+            item.tmTotalSec,
+            item.tmGt0Sec,
+            item.tmGt15Sec,
+            item.tmGt60Sec,
+            item.firstTs,
+            item.lastTs,
+            item.firstLiveTs,
+            item.lastLiveTs,
+            item.firstLiveDelay,
+            item.lastLiveDelay,
+            item.officialCorridorObs,
+            item.syntheticIdObs,
+            item.originStationMatchObs,
+            item.destinationStationMatchObs,
+          );
+        }
+      }
+
+      for (const update of stateUpdates) {
+        this.setOpsState(update.key, update.value);
+      }
+    });
+
+    run();
+  }
+
+  private parseArchiveChunkFile(filePath: string): OpsObservationRow[] {
+    const proc = Bun.spawnSync({
+      cmd: ["zstd", "-q", "-d", "-c", filePath],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (proc.exitCode !== 0) {
+      const stderr = Buffer.from(proc.stderr).toString("utf8").trim();
+      throw new Error(`no se pudo leer ${filePath}: ${stderr}`);
+    }
+
+    const content = Buffer.from(proc.stdout).toString("utf8");
+    if (content.trim().length === 0) {
+      return [];
+    }
+
+    const rows: OpsObservationRow[] = [];
+    const lines = content.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      const codComercial = typeof parsed.cod_comercial === "string" ? parsed.cod_comercial.trim() : "";
+      const capturedAtRaw = Number(parsed.captured_at);
+      const codProductRaw = Number(parsed.cod_product);
+      const delayRaw = Number(parsed.ult_retraso);
+      const sourceRaw =
+        typeof parsed.source === "string" && parsed.source.trim().length > 0
+          ? parsed.source.trim()
+          : "live";
+
+      if (
+        codComercial.length === 0 ||
+        !Number.isFinite(capturedAtRaw) ||
+        !Number.isFinite(codProductRaw) ||
+        !Number.isFinite(delayRaw)
+      ) {
+        continue;
+      }
+
+      const normalizeNullable = (value: unknown) =>
+        typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+
+      rows.push({
+        cod_comercial: codComercial,
+        captured_at: Math.trunc(capturedAtRaw),
+        cod_product: Math.trunc(codProductRaw),
+        cod_origen: normalizeNullable(parsed.cod_origen),
+        cod_destino: normalizeNullable(parsed.cod_destino),
+        des_corridor: normalizeNullable(parsed.des_corridor),
+        ult_retraso: Math.trunc(delayRaw),
+        source: sourceRaw,
+      });
+    }
+
+    return rows.sort((left, right) => left.captured_at - right.captured_at);
+  }
+
+  private processNextArchiveChunk(): { processedRows: number; chunkId: number | null } {
+    const cursor = this.getOpsStateInt(OPS_BACKFILL_CHUNK_CURSOR_KEY, 0);
+    const cutoffCreatedAt = this.getOpsStateInt(
+      OPS_BACKFILL_ARCHIVE_CUTOFF_TS_KEY,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const nextChunk = this.db
+      .query(
+        `
+      SELECT id, file_path
+      FROM observation_archive_chunks
+      WHERE id > ?
+        AND created_at <= ?
+      ORDER BY id ASC
+      LIMIT 1
+      `,
+      )
+      .get(cursor, cutoffCreatedAt) as { id: number; file_path: string } | undefined;
+
+    if (!nextChunk) {
+      return { processedRows: 0, chunkId: null };
+    }
+
+    const rows = this.parseArchiveChunkFile(nextChunk.file_path);
+    const materialized = this.materializeOpsRows(rows);
+    this.persistOpsHourlyAccumulators(materialized.accumulators, [
+      { key: OPS_BACKFILL_CHUNK_CURSOR_KEY, value: String(nextChunk.id) },
+    ]);
+
+    return {
+      processedRows: rows.length,
+      chunkId: nextChunk.id,
+    };
+  }
+
+  private hasPendingArchiveChunks(): boolean {
+    const cursor = this.getOpsStateInt(OPS_BACKFILL_CHUNK_CURSOR_KEY, 0);
+    const cutoffCreatedAt = this.getOpsStateInt(
+      OPS_BACKFILL_ARCHIVE_CUTOFF_TS_KEY,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const next = this.db
+      .query(
+        `
+      SELECT id
+      FROM observation_archive_chunks
+      WHERE id > ?
+        AND created_at <= ?
+      ORDER BY id ASC
+      LIMIT 1
+      `,
+      )
+      .get(cursor, cutoffCreatedAt) as { id: number } | undefined;
+    return Boolean(next);
+  }
+
+  private processLiveObservationBatch(
+    cursor: number,
+    maxObservationId: number | null,
+    limit: number,
+  ): { processedRows: number; lastId: number } {
+    const cappedLimit = Math.max(100, Math.min(limit, 1000000));
+    const rows = this.db
+      .query(
+        `
+      SELECT
+        id,
+        cod_comercial,
+        captured_at,
+        cod_product,
+        cod_origen,
+        cod_destino,
+        des_corridor,
+        ult_retraso,
+        source
+      FROM train_observations
+      WHERE id > ?1
+        AND (?2 IS NULL OR id <= ?2)
+      ORDER BY id ASC
+      LIMIT ?3
+      `,
+      )
+      .all(cursor, maxObservationId, cappedLimit) as OpsObservationCursorRow[];
+
+    if (rows.length === 0) {
+      return { processedRows: 0, lastId: cursor };
+    }
+
+    const materializedRows: OpsObservationRow[] = rows.map((row) => ({
+      cod_comercial: row.cod_comercial,
+      captured_at: row.captured_at,
+      cod_product: row.cod_product,
+      cod_origen: row.cod_origen,
+      cod_destino: row.cod_destino,
+      des_corridor: row.des_corridor,
+      ult_retraso: row.ult_retraso,
+      source: row.source,
+    }));
+    const materialized = this.materializeOpsRows(materializedRows);
+    const lastId = rows[rows.length - 1]?.id ?? cursor;
+    this.persistOpsHourlyAccumulators(materialized.accumulators, [
+      { key: OPS_LIVE_CURSOR_KEY, value: String(lastId) },
+    ]);
+
+    return {
+      processedRows: rows.length,
+      lastId,
+    };
+  }
+
+  runOpsMaterializationTick() {
+    this.ensureOpsBackfillInitialized();
+    let status = this.getOpsBackfillStatus();
+    let processedArchiveRows = 0;
+    let processedLiveRows = 0;
+    let processedArchiveChunkId: number | null = null;
+
+    if (status === OPS_BACKFILL_STATUS_ARCHIVES) {
+      for (let index = 0; index < 20; index += 1) {
+        const archiveProgress = this.processNextArchiveChunk();
+        processedArchiveRows += archiveProgress.processedRows;
+        if (archiveProgress.chunkId !== null) {
+          processedArchiveChunkId = archiveProgress.chunkId;
+        }
+        if (archiveProgress.processedRows === 0) {
+          break;
+        }
+      }
+
+      const liveCursor = this.getOpsStateInt(OPS_LIVE_CURSOR_KEY, 0);
+      const liveProgress = this.processLiveObservationBatch(liveCursor, null, 500000);
+      processedLiveRows += liveProgress.processedRows;
+
+      if (!this.hasPendingArchiveChunks()) {
+        const maxObservationId = this.db
+          .query(`SELECT COALESCE(MAX(id), 0) AS max_id FROM train_observations`)
+          .get() as { max_id: number } | undefined;
+        const maxId = maxObservationId?.max_id ?? 0;
+        this.setOpsState(OPS_BACKFILL_MAX_OBS_ID_KEY, String(maxId));
+        this.setOpsState(OPS_BACKFILL_STATUS_KEY, OPS_BACKFILL_STATUS_LIVE);
+        status = OPS_BACKFILL_STATUS_LIVE;
+      } else {
+        return {
+          status,
+          processedArchiveRows,
+          processedArchiveChunkId,
+          processedLiveRows,
+        };
+      }
+    }
+
+    if (status === OPS_BACKFILL_STATUS_LIVE) {
+      const liveCursor = this.getOpsStateInt(OPS_LIVE_CURSOR_KEY, 0);
+      const maxBackfillObservationId = this.getOpsStateInt(OPS_BACKFILL_MAX_OBS_ID_KEY, 0);
+      const liveProgress = this.processLiveObservationBatch(
+        liveCursor,
+        maxBackfillObservationId,
+        500000,
+      );
+      processedLiveRows = liveProgress.processedRows;
+
+      if (liveProgress.processedRows === 0) {
+        if (this.hasPendingArchiveChunks()) {
+          this.setOpsState(OPS_BACKFILL_STATUS_KEY, OPS_BACKFILL_STATUS_ARCHIVES);
+          status = OPS_BACKFILL_STATUS_ARCHIVES;
+        } else {
+          this.setOpsState(OPS_BACKFILL_STATUS_KEY, OPS_BACKFILL_STATUS_COMPLETED);
+          status = OPS_BACKFILL_STATUS_COMPLETED;
+        }
+      }
+
+      return {
+        status,
+        processedArchiveRows,
+        processedArchiveChunkId,
+        processedLiveRows,
+      };
+    }
+
+    const liveCursor = this.getOpsStateInt(OPS_LIVE_CURSOR_KEY, 0);
+    const incrementalProgress = this.processLiveObservationBatch(liveCursor, null, 120000);
+    processedLiveRows = incrementalProgress.processedRows;
+
+    return {
+      status: OPS_BACKFILL_STATUS_COMPLETED,
+      processedArchiveRows,
+      processedArchiveChunkId,
+      processedLiveRows,
+    };
+  }
+
+  private getOpsRankingMinServices(hours: number): number {
+    if (hours <= 24) {
+      return 20;
+    }
+
+    if (hours <= 168) {
+      return 80;
+    }
+
+    return 200;
+  }
+
+  private formatDirectionLabel(
+    directionKey: string,
+    stationNames: Map<string, string>,
+  ): string {
+    const [rawOrigin = "~", rawDestination = "~"] = directionKey.split("->");
+    const originLabel =
+      rawOrigin !== "~"
+        ? stationNames.get(rawOrigin) ?? rawOrigin
+        : "Origen desconocido";
+    const destinationLabel =
+      rawDestination !== "~"
+        ? stationNames.get(rawDestination) ?? rawDestination
+        : "Destino desconocido";
+    return `${originLabel} -> ${destinationLabel}`;
+  }
+
+  private computePercentile95(values: number[]): number {
+    if (values.length === 0) {
+      return 0;
+    }
+
+    const sorted = values.slice().sort((a, b) => a - b);
+    const position = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
+    return sorted[position] ?? 0;
+  }
+
+  getOpsMetrics(windowHours: number): OpsMetricsPayload {
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const safeHours = [24, 168, 720].includes(Math.trunc(windowHours))
+      ? Math.trunc(windowHours)
+      : 168;
+    const sinceEpoch = nowEpoch - safeHours * 3600;
+    const sinceHour = Math.floor(sinceEpoch / 3600) * 3600;
+    const untilHour = Math.floor(nowEpoch / 3600) * 3600;
+    const sinceDayMadrid = getOperationalDayMadrid(sinceEpoch, 4);
+    const untilDayMadrid = getOperationalDayMadrid(nowEpoch, 4);
+    const minServices = this.getOpsRankingMinServices(safeHours);
+
+    const serviceRows = this.db
+      .query(
+        `
+      SELECT
+        service_instance_id,
+        MAX(cod_product) AS cod_product,
+        MAX(cod_origen) AS cod_origen,
+        MAX(cod_destino) AS cod_destino,
+        MAX(corridor_direction) AS corridor_direction,
+        COALESCE(SUM(observations_total), 0) AS observations_total,
+        COALESCE(SUM(observations_live), 0) AS observations_live,
+        COALESCE(SUM(observations_recovered), 0) AS observations_recovered,
+        COALESCE(SUM(observations_repeated), 0) AS observations_repeated,
+        COALESCE(MAX(max_delay_live), 0) AS max_delay_live,
+        COALESCE(SUM(tm_total_sec), 0) AS tm_total_sec,
+        COALESCE(SUM(tm_gt0_sec), 0) AS tm_gt0_sec,
+        COALESCE(SUM(tm_gt15_sec), 0) AS tm_gt15_sec,
+        COALESCE(SUM(tm_gt60_sec), 0) AS tm_gt60_sec,
+        COALESCE(SUM(official_corridor_obs), 0) AS official_corridor_obs,
+        COALESCE(SUM(synthetic_id_obs), 0) AS synthetic_id_obs,
+        COALESCE(SUM(origin_station_match_obs), 0) AS origin_station_match_obs,
+        COALESCE(SUM(destination_station_match_obs), 0) AS destination_station_match_obs
+      FROM ops_service_hourly
+      WHERE hour_epoch >= ? AND hour_epoch <= ?
+      GROUP BY service_instance_id
+      `,
+      )
+      .all(sinceHour, untilHour) as Array<{
+      service_instance_id: string;
+      cod_product: number;
+      cod_origen: string | null;
+      cod_destino: string | null;
+      corridor_direction: string;
+      observations_total: number;
+      observations_live: number;
+      observations_recovered: number;
+      observations_repeated: number;
+      max_delay_live: number;
+      tm_total_sec: number;
+      tm_gt0_sec: number;
+      tm_gt15_sec: number;
+      tm_gt60_sec: number;
+      official_corridor_obs: number;
+      synthetic_id_obs: number;
+      origin_station_match_obs: number;
+      destination_station_match_obs: number;
+    }>;
+
+    const kmRows = this.db
+      .query(
+        `
+      SELECT
+        cod_product,
+        cod_origen,
+        cod_destino,
+        COALESCE(SUM(total_distance_km), 0) AS km_observed
+      FROM train_daily_stats
+      WHERE day >= ? AND day <= ?
+      GROUP BY cod_product, cod_origen, cod_destino
+      `,
+      )
+      .all(sinceDayMadrid, untilDayMadrid) as Array<{
+      cod_product: number;
+      cod_origen: string | null;
+      cod_destino: string | null;
+      km_observed: number;
+    }>;
+
+    const stationCodes: string[] = [];
+    for (const row of serviceRows) {
+      if (row.cod_origen) {
+        stationCodes.push(row.cod_origen);
+      }
+      if (row.cod_destino) {
+        stationCodes.push(row.cod_destino);
+      }
+    }
+    const stationNames = this.loadStationNameMap(stationCodes);
+
+    const kmByDirection = new Map<string, number>();
+    const kmByProduct = new Map<number, number>();
+    let kmObservedTotal = 0;
+    for (const row of kmRows) {
+      const direction = buildCorridorDirectionKey(row.cod_origen, row.cod_destino);
+      kmByDirection.set(direction, (kmByDirection.get(direction) ?? 0) + row.km_observed);
+      kmByProduct.set(row.cod_product, (kmByProduct.get(row.cod_product) ?? 0) + row.km_observed);
+      kmObservedTotal += row.km_observed;
+    }
+
+    let totalObservations = 0;
+    let liveObservations = 0;
+    let recoveredObservations = 0;
+    let repeatedObservations = 0;
+    let officialCorridorObservations = 0;
+    let syntheticIdObservations = 0;
+    let originMatchObservations = 0;
+    let destinationMatchObservations = 0;
+    let delayed15Services = 0;
+    let severe60Services = 0;
+    let otp5Services = 0;
+    let servicesObserved = 0;
+    let tmGt0Sec = 0;
+    let tmGt15Sec = 0;
+    let tmGt60Sec = 0;
+
+    const directionGroups = new Map<
+      string,
+      {
+        key: string;
+        label: string;
+        services: number;
+        delayed15: number;
+        severe60: number;
+        maxDelays: number[];
+        tm60Sec: number;
+        kmObserved: number;
+      }
+    >();
+    const productGroups = new Map<
+      number,
+      {
+        key: string;
+        label: string;
+        services: number;
+        delayed15: number;
+        severe60: number;
+        maxDelays: number[];
+        tm60Sec: number;
+        kmObserved: number;
+      }
+    >();
+
+    for (const row of serviceRows) {
+      const liveLikeObservations = row.observations_live + row.observations_repeated;
+      const isLiveService = liveLikeObservations > 0;
+      totalObservations += row.observations_total;
+      liveObservations += row.observations_live;
+      recoveredObservations += row.observations_recovered;
+      repeatedObservations += row.observations_repeated;
+      officialCorridorObservations += row.official_corridor_obs;
+      syntheticIdObservations += row.synthetic_id_obs;
+      originMatchObservations += row.origin_station_match_obs;
+      destinationMatchObservations += row.destination_station_match_obs;
+
+      if (!isLiveService) {
+        continue;
+      }
+
+      servicesObserved += 1;
+      tmGt0Sec += row.tm_gt0_sec;
+      tmGt15Sec += row.tm_gt15_sec;
+      tmGt60Sec += row.tm_gt60_sec;
+
+      if (row.max_delay_live > 15) {
+        delayed15Services += 1;
+      }
+      if (row.max_delay_live > 60) {
+        severe60Services += 1;
+      }
+      if (row.max_delay_live <= 5) {
+        otp5Services += 1;
+      }
+
+      const directionKey = row.corridor_direction || buildCorridorDirectionKey(row.cod_origen, row.cod_destino);
+      const directionGroup = directionGroups.get(directionKey) ?? {
+        key: directionKey,
+        label: this.formatDirectionLabel(directionKey, stationNames),
+        services: 0,
+        delayed15: 0,
+        severe60: 0,
+        maxDelays: [],
+        tm60Sec: 0,
+        kmObserved: kmByDirection.get(directionKey) ?? 0,
+      };
+      directionGroup.services += 1;
+      directionGroup.maxDelays.push(row.max_delay_live);
+      directionGroup.tm60Sec += row.tm_gt60_sec;
+      if (row.max_delay_live > 15) {
+        directionGroup.delayed15 += 1;
+      }
+      if (row.max_delay_live > 60) {
+        directionGroup.severe60 += 1;
+      }
+      directionGroups.set(directionKey, directionGroup);
+
+      const productKey = row.cod_product;
+      const productGroup = productGroups.get(productKey) ?? {
+        key: String(productKey),
+        label: getProductName(productKey),
+        services: 0,
+        delayed15: 0,
+        severe60: 0,
+        maxDelays: [],
+        tm60Sec: 0,
+        kmObserved: kmByProduct.get(productKey) ?? 0,
+      };
+      productGroup.services += 1;
+      productGroup.maxDelays.push(row.max_delay_live);
+      productGroup.tm60Sec += row.tm_gt60_sec;
+      if (row.max_delay_live > 15) {
+        productGroup.delayed15 += 1;
+      }
+      if (row.max_delay_live > 60) {
+        productGroup.severe60 += 1;
+      }
+      productGroups.set(productKey, productGroup);
+    }
+
+    const pct = (part: number, total: number) =>
+      total > 0 ? Number(((part / total) * 100).toFixed(1)) : 0;
+
+    const toRankItem = (item: {
+      key: string;
+      label: string;
+      services: number;
+      delayed15: number;
+      severe60: number;
+      maxDelays: number[];
+      tm60Sec: number;
+      kmObserved: number;
+    }): OpsRankItem => {
+      const p15 = pct(item.delayed15, item.services);
+      const p60 = pct(item.severe60, item.services);
+      const p95PeakDelay = Number(this.computePercentile95(item.maxDelays).toFixed(1));
+      const tm60Per100ServicesSec =
+        item.services > 0 ? Number(((item.tm60Sec * 100) / item.services).toFixed(1)) : 0;
+      const tm60Per10000KmSec =
+        item.kmObserved > 0 ? Number(((item.tm60Sec * 10000) / item.kmObserved).toFixed(1)) : 0;
+
+      return {
+        key: item.key,
+        label: item.label,
+        services: item.services,
+        p15,
+        p60,
+        p95PeakDelay,
+        tm60Sec: item.tm60Sec,
+        tm60Per100ServicesSec,
+        tm60Per10000KmSec,
+        kmObserved: Number(item.kmObserved.toFixed(2)),
+      };
+    };
+
+    const directionItems = [...directionGroups.values()]
+      .filter((group) => group.services >= minServices)
+      .map(toRankItem);
+    const productItems = [...productGroups.values()]
+      .filter((group) => group.services >= minServices)
+      .map(toRankItem);
+
+    const rankByRisk = (left: OpsRankItem, right: OpsRankItem) =>
+      right.p15 - left.p15 || right.p60 - left.p60 || right.services - left.services;
+    const rankBySeverity = (left: OpsRankItem, right: OpsRankItem) =>
+      right.p95PeakDelay - left.p95PeakDelay || right.p60 - left.p60 || right.services - left.services;
+    const rankByLoad = (left: OpsRankItem, right: OpsRankItem) =>
+      right.tm60Per100ServicesSec - left.tm60Per100ServicesSec ||
+      right.tm60Per10000KmSec - left.tm60Per10000KmSec ||
+      right.services - left.services;
+
+    const lastSuccess = this.db
+      .query(`SELECT MAX(fetched_at) AS ts FROM ingestion_runs WHERE success = 1`)
+      .get() as { ts: number | null } | undefined;
+    const freshnessSec = lastSuccess?.ts ? Math.max(0, nowEpoch - lastSuccess.ts) : null;
+
+    return {
+      windowHours: safeHours,
+      generatedAt: new Date(nowEpoch * 1000).toISOString(),
+      generatedAtEpoch: nowEpoch,
+      summary: {
+        p15: pct(delayed15Services, servicesObserved),
+        p60: pct(severe60Services, servicesObserved),
+        otp5: pct(otp5Services, servicesObserved),
+        tm: {
+          gt0Sec: tmGt0Sec,
+          gt15Sec: tmGt15Sec,
+          gt60Sec: tmGt60Sec,
+          gt0Hours: Number((tmGt0Sec / 3600).toFixed(2)),
+          gt15Hours: Number((tmGt15Sec / 3600).toFixed(2)),
+          gt60Hours: Number((tmGt60Sec / 3600).toFixed(2)),
+        },
+        servicesObserved,
+        kmObserved: Number(kmObservedTotal.toFixed(2)),
+      },
+      rankings: {
+        corridorDirection: {
+          risk: directionItems.sort(rankByRisk).slice(0, 12),
+          severity: directionItems.sort(rankBySeverity).slice(0, 12),
+          load: directionItems.sort(rankByLoad).slice(0, 12),
+        },
+        product: {
+          risk: productItems.sort(rankByRisk).slice(0, 12),
+          severity: productItems.sort(rankBySeverity).slice(0, 12),
+          load: productItems.sort(rankByLoad).slice(0, 12),
+        },
+      },
+      confidence: {
+        freshnessSec,
+        pctLive: pct(liveObservations, totalObservations),
+        pctRecovered: pct(recoveredObservations, totalObservations),
+        pctRepeated: pct(repeatedObservations, totalObservations),
+        precisionMode: "aggregated_only",
+        pctOfficialCorridor: pct(officialCorridorObservations, totalObservations),
+        pctOriginStationMatch: pct(originMatchObservations, totalObservations),
+        pctDestinationStationMatch: pct(destinationMatchObservations, totalObservations),
+        pctSyntheticId: pct(syntheticIdObservations, totalObservations),
+      },
+    };
   }
 
   recordIngestionRun(input: IngestionRun) {

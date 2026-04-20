@@ -1,5 +1,12 @@
 import type { NormalizedTrain, RawTrain } from "./types";
 
+const madridDayFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Madrid",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 const toNullableString = (value: unknown): string | null => {
   if (typeof value !== "string") {
     return null;
@@ -132,3 +139,38 @@ export const getDelayBucketFlags = (delay: number) => {
 };
 
 export const toEpochSeconds = (): number => Math.floor(Date.now() / 1000);
+
+export const clampNumber = (value: number, min: number, max: number) => {
+  if (value < min) {
+    return min;
+  }
+
+  if (value > max) {
+    return max;
+  }
+
+  return value;
+};
+
+export const getOperationalDayMadrid = (epochSeconds: number, cutoffHour = 4): string => {
+  const shiftedEpochMs = (epochSeconds - cutoffHour * 3600) * 1000;
+  return madridDayFormatter.format(new Date(shiftedEpochMs));
+};
+
+export const buildCorridorDirectionKey = (
+  codOrigen: string | null,
+  codDestino: string | null,
+): string => {
+  const origin = codOrigen && codOrigen.trim().length > 0 ? codOrigen.trim() : "~";
+  const destination = codDestino && codDestino.trim().length > 0 ? codDestino.trim() : "~";
+  return `${origin}->${destination}`;
+};
+
+export const buildServiceInstanceId = (
+  codComercial: string,
+  operationalDay: string,
+  codOrigen: string | null,
+  codDestino: string | null,
+): string => {
+  return `${codComercial}|${operationalDay}|${buildCorridorDirectionKey(codOrigen, codDestino)}`;
+};

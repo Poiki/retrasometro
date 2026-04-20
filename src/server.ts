@@ -4,6 +4,7 @@ import { config } from "./config";
 import { DB } from "./db";
 import { RenfeIngestor } from "./ingestor";
 import { DashboardPresetCache } from "./dashboard-cache";
+import { OpsPresetCache } from "./ops-cache";
 import { ApiKeyManager } from "./auth";
 import { getProductName, getProductNames, type AppLanguage } from "./products";
 import { resolveLanguage, t } from "./i18n";
@@ -207,6 +208,10 @@ const isProtectedPath = (pathname: string): boolean => {
     return true;
   }
 
+  if (pathname === "/api/ops") {
+    return true;
+  }
+
   if (pathname === "/api/trains") {
     return true;
   }
@@ -238,6 +243,7 @@ export const startServer = (
   db: DB,
   ingestor: RenfeIngestor,
   dashboardPresetCache: DashboardPresetCache,
+  opsPresetCache: OpsPresetCache,
 ) => {
   const apiKeyManager = new ApiKeyManager();
 
@@ -246,7 +252,15 @@ export const startServer = (
     async fetch(request) {
       const url = new URL(request.url);
       const response = url.pathname.startsWith("/api/")
-        ? await handleApi(request, url, db, ingestor, dashboardPresetCache, apiKeyManager)
+        ? await handleApi(
+            request,
+            url,
+            db,
+            ingestor,
+            dashboardPresetCache,
+            opsPresetCache,
+            apiKeyManager,
+          )
         : await serveStatic(url.pathname);
 
       return maybeCompressResponse(request, response);
@@ -263,6 +277,7 @@ const handleApi = async (
   db: DB,
   ingestor: RenfeIngestor,
   dashboardPresetCache: DashboardPresetCache,
+  opsPresetCache: OpsPresetCache,
   apiKeyManager: ApiKeyManager,
 ): Promise<Response> => {
   const lang = resolveLanguage(url, request);
@@ -295,6 +310,7 @@ const handleApi = async (
     const sampleCorridorMeta = db.getCorridorMeta();
     const sampleCoverage = db.getHistoryCoverage(48, Math.floor(config.pollingIntervalMs / 1000));
     const sampleStorage = db.getObservationArchiveStorage();
+    const sampleOps = db.getOpsMetrics(24);
     const sampleTrains = withProductLabels(
       db.listTrains({
         query: null,
@@ -377,6 +393,20 @@ const handleApi = async (
         limit: 2,
         offset: 0,
         items: sampleTrains,
+      },
+      ops: {
+        ok: true,
+        language: lang,
+        generatedAt: new Date().toISOString(),
+        cacheMeta: {
+          source: "cache",
+          windowHours: 24,
+          generatedAt: sampleOps.generatedAt,
+          ageSeconds: 10,
+        },
+        summary: sampleOps.summary,
+        rankings: sampleOps.rankings,
+        confidence: sampleOps.confidence,
       },
       rawLive: {
         ok: true,
@@ -539,6 +569,31 @@ const handleApi = async (
             ],
             headers: [{ name: "x-api-key", required: true, description: "Temporary API key" }],
             sampleResponse: responseSamples.trains,
+          },
+          {
+            id: "ops",
+            method: "GET",
+            path: "/api/ops",
+            route: "GET /api/ops?window=24|168|720",
+            protected: true,
+            description:
+              lang === "es"
+                ? "Métricas operativas V1 (incidencia, severidad, exposición y confianza)."
+                : "Operational V1 metrics (incidence, severity, exposure and confidence).",
+            query: [
+              {
+                name: "window",
+                type: "integer",
+                required: false,
+                example: 168,
+                description:
+                  lang === "es"
+                    ? "Ventana operativa: 24h, 7d o 30d."
+                    : "Operational window: 24h, 7d or 30d.",
+              },
+            ],
+            headers: [{ name: "x-api-key", required: true, description: "Temporary API key" }],
+            sampleResponse: responseSamples.ops,
           },
           {
             id: "trainHistory",
@@ -753,6 +808,7 @@ const handleApi = async (
         db,
         ingestor,
         dashboardPresetCache,
+        opsPresetCache,
         lang,
       );
     } finally {
@@ -769,6 +825,7 @@ const handleProtectedApi = async (
   db: DB,
   ingestor: RenfeIngestor,
   dashboardPresetCache: DashboardPresetCache,
+  opsPresetCache: OpsPresetCache,
   lang: AppLanguage,
 ): Promise<Response> => {
   if (url.pathname === "/api/dashboard") {
@@ -1017,6 +1074,92 @@ const handleProtectedApi = async (
         docs: "/api/docs",
         raw: "/api/raw/live",
       },
+    });
+  }
+
+  if (url.pathname === "/api/ops") {
+    const windowRaw = parseIntOrNull(url.searchParams.get("window")) ?? 168;
+    const windowHours = [24, 168, 720].includes(windowRaw) ? windowRaw : 168;
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    let payload = db.getOpsMetrics(windowHours);
+    let cacheMeta: {
+      source: "cache" | "live";
+      windowHours: number;
+      generatedAt: string;
+      ageSeconds: number;
+    } = {
+      source: "live",
+      windowHours,
+      generatedAt: payload.generatedAt,
+      ageSeconds: 0,
+    };
+
+    if (opsPresetCache.isPresetHours(windowHours)) {
+      const cached = await opsPresetCache.read(windowHours);
+      if (cached) {
+        payload = cached;
+        cacheMeta = {
+          source: "cache",
+          windowHours,
+          generatedAt: cached.generatedAt,
+          ageSeconds: Math.max(0, nowEpoch - cached.generatedAtEpoch),
+        };
+      } else {
+        payload = await opsPresetCache.generate(windowHours);
+        cacheMeta = {
+          source: "live",
+          windowHours,
+          generatedAt: payload.generatedAt,
+          ageSeconds: 0,
+        };
+      }
+    }
+
+    const localizeOpsRank = (item: {
+      key: string;
+      label: string;
+      services: number;
+      p15: number;
+      p60: number;
+      p95PeakDelay: number;
+      tm60Sec: number;
+      tm60Per100ServicesSec: number;
+      tm60Per10000KmSec: number;
+      kmObserved: number;
+    }) => {
+      const maybeProduct = Number(item.key);
+      if (Number.isInteger(maybeProduct) && String(maybeProduct) === item.key) {
+        const names = getProductNames(maybeProduct);
+        return {
+          ...item,
+          productName: getProductName(maybeProduct, lang),
+          productNameEs: names.es,
+          productNameEn: names.en,
+        };
+      }
+
+      return item;
+    };
+
+    return json({
+      ok: true,
+      language: lang,
+      generatedAt: new Date().toISOString(),
+      cacheMeta,
+      summary: payload.summary,
+      rankings: {
+        corridorDirection: {
+          risk: payload.rankings.corridorDirection.risk,
+          severity: payload.rankings.corridorDirection.severity,
+          load: payload.rankings.corridorDirection.load,
+        },
+        product: {
+          risk: payload.rankings.product.risk.map(localizeOpsRank),
+          severity: payload.rankings.product.severity.map(localizeOpsRank),
+          load: payload.rankings.product.load.map(localizeOpsRank),
+        },
+      },
+      confidence: payload.confidence,
     });
   }
 
