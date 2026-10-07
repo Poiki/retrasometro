@@ -22,6 +22,9 @@ Dashboard de métricas ferroviarias en tiempo real con ingesta automática cada 
 - [Recuperación de histórico](#recuperacion-historico)
 - [Docker + Postgres](#docker-postgres)
 - [Migración manual SQLite -> Postgres](#migracion-manual)
+- [Conservación, actualización y verificación](#conservacion-actualizacion)
+- [Operación del servicio y restauración](#operacion-servicio)
+- [Resultados de la mejora](STORAGE_REVIEW.md)
 
 <a id="parte-1"></a>
 ## Parte 1: Información General
@@ -50,9 +53,9 @@ El objetivo principal es **almacenar y mantener un histórico trazable de datos 
   - `train_daily_stats`: acumulados diarios por tren.
 - Limpieza y compactación automática:
   - elimina trenes no vistos tras un umbral (`STALE_TRAIN_SECONDS`).
-  - purga snapshots antiguos (`SNAPSHOT_RETENTION_HOURS`).
-  - histórico configurable (`HISTORY_RETENTION_DAYS`, `0` = sin purga).
-  - conserva acumulados diarios.
+  - conserva snapshots, observaciones, lotes, ejecuciones y agregados sin límite por defecto.
+  - permite retenciones explícitas; las observaciones solo se retiran tras archivado verificado.
+  - la compactación física con `VACUUM` se ejecuta mediante el script de mantenimiento.
 - Frontend + API:
   - selector de idioma ES/EN.
   - documentación API tipo Swagger con ejemplos reales.
@@ -61,7 +64,7 @@ El objetivo principal es **almacenar y mantener un histórico trazable de datos 
 - Seguridad de API:
   - clave temporal obligatoria para rutas de datos.
   - máximo 1 petición concurrente por clave.
-  - máximo 1 petición por segundo por clave.
+  - intervalo mínimo por clave: `API_RATE_LIMIT_MS` (200 ms por defecto; 1.000 ms en Docker Compose).
 
 <a id="alcance-del-historico"></a>
 ### Alcance del histórico (importante)
@@ -72,17 +75,9 @@ El objetivo principal es **almacenar y mantener un histórico trazable de datos 
 <a id="transparencia-publicacion"></a>
 ### Transparencia y publicación de datos
 
-Este repositorio permite publicar `data/renfe.db` porque los datos provienen de fuentes públicas.
+Git conserva código, configuración de ejemplo, documentación y resultados de verificación. `data/` y `.env` están excluidos: SQLite, archivos históricos y backups se mantienen en el almacenamiento del servicio.
 
-Comandos típicos:
-
-```bash
-git add data/renfe.db
-git commit -m "Publicar snapshot de base de datos"
-git push
-```
-
-Nota: si la base crece mucho, considera snapshots periódicos o Git LFS.
+Para distribuir los datos, usa una instantánea coherente de SQLite junto con los archivos del manifiesto. La API de backup de SQLite incorpora las transacciones confirmadas del WAL; una copia aislada de `renfe.db` mientras la ingesta está activa puede omitirlas. El paquete de mantenimiento contiene también `.env`, por lo que debe mantenerse privado.
 
 <a id="esquema-datos"></a>
 ### Esquema de datos (resumen)
@@ -91,8 +86,13 @@ Nota: si la base crece mucho, considera snapshots periódicos o Git LFS.
 - `train_snapshots`: historial de cambios por tren.
 - `train_observations`: historial temporal por ingesta (incluye `source` e `is_estimated`).
 - `train_daily_stats`: acumulado por día y tren.
+- `train_hourly_train_stats`: agregados horarios para consultas históricas.
+- `ingestion_batches`: procedencia de cada lote de observaciones.
+- `observation_archive_chunks`: rutas, rangos, recuentos y SHA-256 del histórico comprimido.
+- `ops_service_hourly` y `ops_materialization_state`: métricas operativas y avance de materialización.
 - `ingestion_runs`: auditoría de cada ciclo de ingesta.
 - `stations`: catálogo de estaciones (`estaciones.geojson`).
+- `app_state`: última marca del proveedor y estado de recuperación histórica.
 
 <a id="parte-2"></a>
 ## Parte 2: Guía Técnica (Instalación y Operación)
@@ -101,6 +101,8 @@ Nota: si la base crece mucho, considera snapshots periódicos o Git LFS.
 ### Requisitos
 
 - Bun 1.3+
+- Zstd (`zstd`) para leer o crear archivos históricos y ejecutar las comprobaciones de regresión.
+- Python 3.11+ y systemd solo para el mantenimiento del servicio local.
 - Docker (opcional)
 - Docker Compose (opcional)
 
@@ -152,24 +154,25 @@ Variables principales:
 - `STATIONS_SUPPLEMENTAL_ENDPOINT`: fuente secundaria GeoJSON (p. ej. Cercanías) para completar códigos faltantes.
 - `FETCH_TIMEOUT_MS`: timeout HTTP por intento.
 - `STALE_TRAIN_SECONDS`: segundos para purgar trenes no vistos.
-- `SNAPSHOT_RETENTION_HOURS`: retención de snapshots.
+- `SNAPSHOT_RETENTION_HOURS`: retención de snapshots (`0` = conservar todo; valor por defecto).
+- `INGESTION_RUN_RETENTION_DAYS`: retención de ejecuciones de ingesta (`0` = conservar todo).
 - `SNAPSHOT_HEARTBEAT_SECONDS`: inserta snapshot aunque no cambie el tren cada N segundos.
-- `COMPACT_EVERY_RUNS`: cada cuántas ingestas ejecutar compactación.
+- `COMPACT_EVERY_RUNS`: frecuencia de limpieza configurada, `PRAGMA optimize` y checkpoint WAL; no ejecuta `VACUUM`.
 - `DISPLAY_CACHE_DIR`: carpeta de cache JSON de dashboard precomputado.
-- `DISPLAY_CACHE_24_SECONDS`: refresco del cache de ventana 24h.
-- `DISPLAY_CACHE_168_SECONDS`: refresco del cache de ventana 7d.
-- `DISPLAY_CACHE_720_SECONDS`: refresco del cache de ventana 30d.
+- `DISPLAY_CACHE_24_SECONDS`: refresco de caché 24h (60 segundos por defecto).
+- `DISPLAY_CACHE_168_SECONDS`: refresco de caché 7d (60 segundos por defecto).
+- `DISPLAY_CACHE_720_SECONDS`: refresco de caché 30d (60 segundos por defecto).
 - `API_KEY_TTL_SECONDS`: duración de la clave API temporal.
 - `API_RATE_LIMIT_MS`: intervalo mínimo entre peticiones por clave (default `200`).
 - `RAW_MAX_TRAINS`: máximo de trenes en `/api/raw/live`.
-- `OBSERVATION_RETENTION_DAYS`: retención de `train_observations` en SQLite.
-- `HOURLY_RETENTION_DAYS`: retención de `train_hourly_train_stats`.
+- `OBSERVATION_RETENTION_DAYS`: ventana de detalle en SQLite (`0` = conservar todo). Solo se retiran filas con archivado verificado y `ARCHIVE_ENABLED=1`.
+- `HOURLY_RETENTION_DAYS`: retención de `train_hourly_train_stats` (`0` = conservar todo).
 - `DAILY_RETENTION_DAYS`: retención de `train_daily_stats` (`0` = indefinido).
-- `BATCH_RETENTION_DAYS`: retención de `ingestion_batches`.
-- `ARCHIVE_ENABLED`: activa archivado previo de observaciones antiguas.
+- `BATCH_RETENTION_DAYS`: retención de `ingestion_batches` (`0` = conservar todo y sus relaciones).
+- `ARCHIVE_ENABLED`: crea archivos de observaciones antiguas (desactivado por defecto). Los archivos ya existentes siguen siendo consultables.
 - `ARCHIVE_DIR`: directorio destino para `JSONL.zst` por hora.
 - `ARCHIVE_ZSTD_LEVEL`: nivel de compresión Zstd (1-19).
-- `ARCHIVE_ENABLED=1` requiere binario `zstd` disponible en runtime para crear chunks comprimidos.
+- El archivado nuevo requiere `ARCHIVE_ENABLED=1` y `OBSERVATION_RETENTION_DAYS>0`, además del binario `zstd`. Las demás tablas conservan sus propias retenciones.
 - `WAL_CHECKPOINT_TRUNCATE_BYTES`: tamaño mínimo del WAL para checkpoint `TRUNCATE`.
 - `HTTP_COMPRESSION_ENABLED`: activa compresión HTTP (`br`/`gzip`).
 - `HTTP_COMPRESSION_MIN_BYTES`: umbral mínimo de tamaño para comprimir respuestas.
@@ -179,8 +182,8 @@ Variables principales:
 - `RECOVERY_LOOKBACK_HOURS`: ventana de recuperación desde snapshots al arrancar.
 - `POSTGRES_URL`: conexión para migrar SQLite -> Postgres.
 - `SQLITE_PATH`: ruta SQLite para script de migración.
-- `MIGRATION_BATCH_SIZE`: lote de inserción en migración.
-- `AUTO_MIGRATE_PG_ON_START`: migración automática a Postgres al arrancar Docker (`1`/`0`).
+- `MIGRATION_BATCH_SIZE`: lote de inserción en migración (entero entre 1 y 1.000; defecto 500).
+- `AUTO_MIGRATE_PG_ON_START`: migración automática a Postgres al arrancar Docker (`1`/`0`, desactivada por defecto). El destino debe estar vacío; el script no sobrescribe datos existentes.
 - `BOOTSTRAP_SQLITE_PATH`: ruta de bootstrap de SQLite al primer arranque Docker.
 - `BOOTSTRAP_CACHE_PATH`: ruta de bootstrap de cache al primer arranque Docker.
 
@@ -192,10 +195,12 @@ Públicos:
 - `GET /api/docs`
 - `GET /api/health`
 - `GET /api/auth/request-key`
+- `GET /api/events`: flujo SSE de avisos de ingesta y caché; mantiene la conexión abierta.
 
 Protegidos (requieren `x-api-key`):
 
 - `GET /api/dashboard?historyHours=24|168|720&historyFrom=ISO|epoch&historyTo=ISO|epoch`
+- `GET /api/ops?window=24|168|720`
 - `GET /api/trains?q=&minDelay=&limit=&offset=`
 - `GET /api/trains/:codComercial/history?hours=24`
 - `GET /api/ingestion/runs?limit=50`
@@ -223,7 +228,7 @@ Precisión numérica:
    - `x-api-key: <tu_clave>`
 3. Respeta límites:
    - 1 petición en curso por clave.
-   - 1 petición/segundo por clave.
+   - intervalo indicado en `limits.minIntervalMs` al solicitar la clave. No se reinicia la espera al terminar una petición.
 
 <a id="ejemplo-rango-historico"></a>
 ### Ejemplo: rango histórico personalizado
@@ -261,7 +266,7 @@ docker compose up -d --build
 
 Servicios:
 
-- `app` en `http://localhost:3000`
+- `app` en `http://localhost:3011` (puerto 3000 dentro del contenedor)
 - `postgres` en `localhost:5432` (`renfe/renfe`, DB `renfe_analytics`)
 
 Persistencia entre sesiones:
@@ -273,7 +278,9 @@ Integración automática al arrancar Docker:
 
 1. Si `appdata` está vacío y existe `./data/renfe.db`, se importa automáticamente.
 2. Si existe `./data/cache/flotaLD.latest.json`, también se importa.
-3. Si `AUTO_MIGRATE_PG_ON_START=1`, se ejecuta migración automática SQLite -> Postgres.
+3. La migración a PostgreSQL está desactivada por defecto. `AUTO_MIGRATE_PG_ON_START=1` la solicita sobre un destino vacío.
+
+El bootstrap copia SQLite y la caché; usa una instantánea coherente, nunca el archivo de una base con escrituras activas. Para trasladar el histórico comprimido, copia también sus archivos a `appdata` y conserva las rutas que figuran en `observation_archive_chunks`. No borres el volumen existente para volver a importar datos.
 
 Ver volúmenes:
 
@@ -300,7 +307,7 @@ Con Docker Compose:
 docker compose --profile tools run --rm migrate_to_postgres
 ```
 
-El script crea esquema en Postgres, vacía tablas destino y copia todas las tablas históricas.
+El script exige tablas destino vacías y copia las 12 tablas de aplicación, incluidas las tablas Ops, dentro de una transacción PostgreSQL. Lee SQLite por lotes sobre una instantánea estable y comprueba recuentos. Si encuentra datos en el destino, aborta sin sobrescribirlos. Los archivos JSONL.zst se trasladan por separado; copiar el manifiesto no sustituye sus archivos.
 
 ### Licencia
 
@@ -311,3 +318,99 @@ Este proyecto se distribuye bajo:
 ---
 
 Este proyecto consume endpoints públicos desde frontend oficial de RENFE y está pensado para analítica/monitorización técnica.
+
+<a id="conservacion-actualizacion"></a>
+### Conservación y actualización
+
+Todas las retenciones están desactivadas por defecto. La ingesta se confirma en una única transacción SQLite con `synchronous=FULL`. Los archivos históricos se comprueban contra su SHA-256 al consultarlos y el archivado nuevo conserva todos los campos, incluido `id`.
+
+El servidor entrega los datos actuales y los trenes en una petición. Los cálculos históricos se ejecutan en un Worker de Bun, con cachés de 60 segundos para 24h, 7d y 30d. `GET /api/events` avisa de cada ingesta confirmada y de las cachés actualizadas; las páginas se actualizan automáticamente. Si falta una caché, el dashboard muestra los datos actuales mientras se prepara el histórico. La fuente se consulta cada `POLL_INTERVAL_MS` (60 segundos por defecto).
+
+Verificación reproducible:
+
+```bash
+bun run check
+bun run test
+node --check public/app.js
+node --check public/ops-lab.js
+git diff --check
+```
+
+Las regresiones usan una base temporal y prueban retención cero, recuperación idempotente, rollback de ingesta, fidelidad y corrupción de archivos, detalle archivado, bordes horarios, caché fría, autenticación, concurrencia HTTP, SSE y aislamiento del Worker. El mensaje `[ingestor] error test failure` corresponde al fallo provocado para comprobar rollback; el resultado final debe ser `OK` y el proceso terminar con código 0.
+
+Mantenimiento local: `python3 scripts/compact-storage.py` detiene temporalmente `retrasometro.service`, respalda SQLite, retira el índice redundante y ejecuta `VACUUM`. Reanuda el servicio antes de comparar todos los campos entre las instantáneas. Conserva un `backup.tar.zst` con SQLite, archivos históricos y configuración, comprueba su restauración y guarda `verification.json` en `data/backups/<fecha UTC>/`. No borra las copias anteriores. El script apunta a `data/renfe.db` de este checkout y al servicio `retrasometro.service`; no toma `DB_PATH` del entorno ni opera sobre Docker. Requiere Python 3.11+, Zstd, acceso a systemd y espacio para varias instantáneas temporales. La compactación puede tardar varios minutos en una base grande.
+
+La migración a PostgreSQL lee por lotes dentro de una instantánea estable y incluye las tablas Ops. Los archivos JSONL.zst deben acompañar al manifiesto: el script SQL no los traslada.
+
+<a id="operacion-servicio"></a>
+### Operación del servicio y restauración
+
+En el servidor aplicado, el checkout es `/root/retrasometro`, Bun escucha en `127.0.0.1:3011` y Nginx sirve `https://retrasometro.com`. El servicio usa `bun run start`; los cambios de TypeScript requieren reiniciarlo. La configuración local y el drop-in de systemd se mantienen fuera de Git.
+
+```bash
+cd /root/retrasometro
+bun run check
+bun run test
+systemctl restart retrasometro.service
+systemctl is-active retrasometro.service
+curl --fail --silent http://127.0.0.1:3011/api/health
+tail -n 30 /var/log/retrasometro.log
+```
+
+El drop-in `/etc/systemd/system/retrasometro.service.d/runtime-hotfix.conf` conserva estos valores. Reprodúcelos si trasladas este servicio; los valores de systemd prevalecen sobre `.env`:
+
+```ini
+[Service]
+Environment=ARCHIVE_ENABLED=0
+Environment=OBSERVATION_RETENTION_DAYS=0
+Environment=COMPACT_EVERY_RUNS=1440
+Environment=SNAPSHOT_RETENTION_HOURS=0
+Environment=INGESTION_RUN_RETENTION_DAYS=0
+Environment=HOURLY_RETENTION_DAYS=0
+Environment=DAILY_RETENTION_DAYS=0
+Environment=BATCH_RETENTION_DAYS=0
+Environment=DISPLAY_CACHE_168_SECONDS=60
+Environment=DISPLAY_CACHE_720_SECONDS=60
+```
+
+Después de cambiar un drop-in, ejecuta `systemctl daemon-reload` y reinicia el servicio. Para SSE, el proxy debe permitir una conexión larga y transmitir los eventos sin acumularlos; la respuesta incluye `X-Accel-Buffering: no` y un comentario de mantenimiento cada 20 segundos. El servidor desactiva el timeout únicamente para esa ruta. HTML, JavaScript y CSS se sirven con `no-cache`, y la web debe recargarse una vez después del despliegue.
+
+El backup verificado del 7 de octubre se creó a las **16:39:42, hora de Madrid**. Su carpeta usa UTC: `data/backups/20261007T143942Z/`. Contiene `backup.tar.zst` y `verification.json`. La [verificación conservada en Git](docs/storage-verification-2026-10-07.json) permite comprobar una copia del paquete sin incluir los datos ni la configuración privada en el repositorio.
+
+Para comprobar la restauración en un directorio aislado:
+
+```bash
+umask 077
+backup=data/backups/20261007T143942Z/backup.tar.zst
+restore_dir=$(mktemp -d /tmp/retrasometro-restore.XXXXXX)
+zstd -q -t "$backup"
+python3 - "$backup" docs/storage-verification-2026-10-07.json <<'PYHASH'
+import hashlib, json, sys
+from pathlib import Path
+report = json.loads(Path(sys.argv[2]).read_text())
+with Path(sys.argv[1]).open('rb') as stream:
+    assert hashlib.file_digest(stream, 'sha256').hexdigest() == report['backup_sha256']
+print('OK: SHA-256 del paquete completo')
+PYHASH
+zstd -q -d -c "$backup" | tar -x -C "$restore_dir"
+python3 - "$restore_dir/data/renfe.db" docs/storage-verification-2026-10-07.json <<'PYVERIFY'
+import hashlib, json, sqlite3, sys
+from pathlib import Path
+path = Path(sys.argv[1]).resolve()
+report = json.loads(Path(sys.argv[2]).read_text())
+with path.open('rb') as stream:
+    assert hashlib.file_digest(stream, 'sha256').hexdigest() == report['sqlite_backup_sha256']
+db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+try:
+    assert db.execute('PRAGMA quick_check').fetchall() == [('ok',)]
+    for name, expected in report['counts_before'].items():
+        assert db.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0] == expected
+finally:
+    db.close()
+print('OK: SHA-256, integridad y recuentos de SQLite restaurada')
+PYVERIFY
+```
+
+Usa el `verification.json` de la misma carpeta cuando compruebes otro backup. La extracción anterior deja `.env` y los archivos históricos dentro del directorio aislado y conserva la base activa. Para poner una restauración en servicio, detén primero la ingesta y guarda la base actual junto con su WAL, SHM, archivos históricos y configuración. Sustituirla por un backup anterior retrocede al instante de esa captura; las escrituras posteriores deben conservarse o recuperarse por separado. Al trasladar el proyecto, verifica que las rutas del manifiesto resuelvan a los archivos restaurados.
+
+Los resultados, la pausa de mantenimiento, los límites de frescura y las comprobaciones de conservación están en [STORAGE_REVIEW.md](STORAGE_REVIEW.md). La compactación ya se aplicó; no hace falta ejecutarla de nuevo al instalar este commit.

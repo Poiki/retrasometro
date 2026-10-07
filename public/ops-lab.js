@@ -112,6 +112,8 @@ const I18N = {
 const state = {
   lang: (localStorage.getItem("retrasometro_lang") ?? localStorage.getItem("renfe_lang")) === "en" ? "en" : "es",
   key: null,
+  lastRequestAt: 0,
+  minIntervalMs: 200,
   windowHours: 168,
   payload: null,
 };
@@ -322,13 +324,16 @@ const requestApiKey = async () => {
   }
 
   state.key = data.apiKey;
+  state.minIntervalMs = Number(data.limits?.minIntervalMs ?? 200);
 };
 
-const loadOps = async () => {
+const loadOps = async (retry = true) => {
   if (!state.key) {
     await requestApiKey();
   }
 
+  await new Promise((resolve) => setTimeout(resolve, Math.max(0, state.lastRequestAt + state.minIntervalMs + 10 - Date.now())));
+  state.lastRequestAt = Date.now();
   const response = await fetch(`/api/ops?window=${state.windowHours}`, {
     headers: {
       "x-api-key": state.key,
@@ -336,9 +341,13 @@ const loadOps = async () => {
     },
   });
 
-  if (response.status === 401 || response.status === 429) {
+  if (retry && response.status === 401) {
     await requestApiKey();
-    return loadOps();
+    return loadOps(false);
+  }
+  if (retry && response.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, state.minIntervalMs));
+    return loadOps(false);
   }
 
   if (!response.ok) {
@@ -349,17 +358,38 @@ const loadOps = async () => {
   state.payload = data;
 };
 
-const refresh = async () => {
-  setStatus(t("loading"));
-  try {
-    await loadOps();
-    render();
-    setStatus(t("ready"), "ok");
-  } catch (error) {
+let refreshing = null;
+let refreshAgain = false;
+const refresh = () => {
+  if (refreshing) { refreshAgain = true; return refreshing; }
+  refreshing = (async () => {
+    do {
+      refreshAgain = false;
+      if (!state.payload) setStatus(t("loading"));
+      await loadOps();
+      render();
+      setStatus(t("ready"), "ok");
+    } while (refreshAgain);
+  })().catch((error) => {
     console.error("[ops-lab]", error);
     setStatus(t("error"), "error");
-  }
+  }).finally(() => { refreshing = null; });
+  return refreshing;
 };
+
+const events = new EventSource("/api/events");
+let connected = false;
+events.onopen = () => { connected = true; if (state.payload && !document.hidden) void refresh(); };
+events.onerror = () => { connected = false; };
+events.onmessage = (event) => {
+  if (JSON.parse(event.data).kind === "history" && state.payload && !document.hidden) void refresh();
+};
+setInterval(() => {
+  if (!connected && !document.hidden) void refresh();
+}, 5000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void refresh();
+});
 
 const init = async () => {
   langSwitchEl.value = state.lang;

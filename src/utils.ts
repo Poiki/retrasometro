@@ -1,4 +1,17 @@
 import type { NormalizedTrain, RawTrain } from "./types";
+import { dirname } from "node:path";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { config } from "./config";
+
+export const getDisplayRefreshInterval = (hours: number) =>
+  hours === 24 ? config.displayCache24Seconds : hours === 168 ? config.displayCache168Seconds : config.displayCache720Seconds;
+
+export const writeJsonAtomic = async (filePath: string, content: string) => {
+  await mkdir(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  await writeFile(tempPath, content, "utf8");
+  await rename(tempPath, filePath);
+};
 
 const madridDayFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Europe/Madrid",

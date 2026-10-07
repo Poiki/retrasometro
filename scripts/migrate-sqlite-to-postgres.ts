@@ -7,6 +7,7 @@ type SqlRow = Record<string, unknown>;
 const sqlitePath = Bun.env.SQLITE_PATH ?? "./data/renfe.db";
 const postgresUrl = Bun.env.POSTGRES_URL ?? Bun.env.DATABASE_URL;
 const batchSize = Number(Bun.env.MIGRATION_BATCH_SIZE ?? 500);
+if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 1000) throw new Error("MIGRATION_BATCH_SIZE debe ser un entero entre 1 y 1000.");
 
 if (!postgresUrl) {
   throw new Error("Define POSTGRES_URL o DATABASE_URL para ejecutar la migracion.");
@@ -16,7 +17,7 @@ if (!existsSync(sqlitePath)) {
   throw new Error(`No existe la base sqlite en ${sqlitePath}`);
 }
 
-const sqlite = new Database(sqlitePath, { readonly: true });
+const sqlite = new Database(sqlitePath, { readonly: true, safeIntegers: true });
 const pg = new Client({ connectionString: postgresUrl });
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
@@ -183,6 +184,48 @@ const createSchema = async (client: Client) => {
       PRIMARY KEY(day, cod_comercial)
     );
 
+      CREATE TABLE IF NOT EXISTS ops_service_hourly (
+        service_instance_id TEXT NOT NULL,
+        hour_epoch BIGINT NOT NULL,
+        operational_day TEXT NOT NULL,
+        cod_comercial TEXT NOT NULL,
+        cod_product BIGINT NOT NULL,
+        cod_origen TEXT,
+        cod_destino TEXT,
+        corridor_direction TEXT NOT NULL,
+        observations_total BIGINT NOT NULL DEFAULT 0,
+        observations_live BIGINT NOT NULL DEFAULT 0,
+        observations_recovered BIGINT NOT NULL DEFAULT 0,
+        observations_repeated BIGINT NOT NULL DEFAULT 0,
+        max_delay_live BIGINT NOT NULL DEFAULT 0,
+        max_delay_all BIGINT NOT NULL DEFAULT 0,
+        tm_total_sec BIGINT NOT NULL DEFAULT 0,
+        tm_gt0_sec BIGINT NOT NULL DEFAULT 0,
+        tm_gt15_sec BIGINT NOT NULL DEFAULT 0,
+        tm_gt60_sec BIGINT NOT NULL DEFAULT 0,
+        first_ts BIGINT NOT NULL,
+        last_ts BIGINT NOT NULL,
+        first_live_ts BIGINT,
+        last_live_ts BIGINT,
+        first_live_delay BIGINT,
+        last_live_delay BIGINT,
+        official_corridor_obs BIGINT NOT NULL DEFAULT 0,
+        synthetic_id_obs BIGINT NOT NULL DEFAULT 0,
+        origin_station_match_obs BIGINT NOT NULL DEFAULT 0,
+        destination_station_match_obs BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY(service_instance_id, hour_epoch)
+      );
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_time ON ops_service_hourly(hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_direction_time ON ops_service_hourly(corridor_direction, hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_product_time ON ops_service_hourly(cod_product, hour_epoch DESC);
+      CREATE INDEX IF NOT EXISTS idx_ops_hourly_operational_day ON ops_service_hourly(operational_day DESC);
+
+      CREATE TABLE IF NOT EXISTS ops_materialization_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+
     CREATE INDEX IF NOT EXISTS idx_ingestion_fetched_at ON ingestion_runs(fetched_at DESC);
     CREATE INDEX IF NOT EXISTS idx_batches_fetched_at ON ingestion_batches(fetched_at DESC);
     CREATE INDEX IF NOT EXISTS idx_current_product ON trains_current(cod_product);
@@ -190,7 +233,6 @@ const createSchema = async (client: Client) => {
     CREATE INDEX IF NOT EXISTS idx_current_delay ON trains_current(ult_retraso DESC);
     CREATE INDEX IF NOT EXISTS idx_snapshots_train_time ON train_snapshots(cod_comercial, captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_snapshots_time ON train_snapshots(captured_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_observations_train_time ON train_observations(cod_comercial, captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_observations_time ON train_observations(captured_at DESC);
     CREATE INDEX IF NOT EXISTS idx_archive_chunks_range ON observation_archive_chunks(from_ts, to_ts);
     CREATE INDEX IF NOT EXISTS idx_hourly_time ON train_hourly_train_stats(hour_epoch DESC);
@@ -202,42 +244,12 @@ const createSchema = async (client: Client) => {
   `);
 };
 
-const truncateTarget = async (client: Client) => {
-  await client.query(`
-    TRUNCATE TABLE
-      train_observations,
-      observation_archive_chunks,
-      train_hourly_train_stats,
-      train_snapshots,
-      train_daily_stats,
-      trains_current,
-      stations,
-      ingestion_batches,
-      ingestion_runs,
-      app_state
-    RESTART IDENTITY CASCADE;
-  `);
-};
-
 const normalizeValue = (value: unknown) => {
   if (typeof value === "bigint") {
-    return Number(value);
+    return value.toString();
   }
 
   return value ?? null;
-};
-
-const sqliteHasTable = (sourceDb: Database, tableName: string): boolean => {
-  const row = sourceDb
-    .query(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1`)
-    .get(tableName) as { ok: number } | undefined;
-
-  return Boolean(row?.ok);
-};
-
-const sqliteHasColumn = (sourceDb: Database, tableName: string, columnName: string): boolean => {
-  const rows = sourceDb.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
-  return rows.some((row) => row.name === columnName);
 };
 
 const insertRows = async (
@@ -250,25 +262,10 @@ const insertRows = async (
     return;
   }
 
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const chunk = rows.slice(i, i + batchSize);
-    const values: unknown[] = [];
-    const tuples: string[] = [];
-    let placeholder = 1;
-
-    for (const row of chunk) {
-      const tuple: string[] = [];
-      for (const column of columns) {
-        tuple.push(`$${placeholder}`);
-        values.push(normalizeValue(row[column]));
-        placeholder += 1;
-      }
-      tuples.push(`(${tuple.join(",")})`);
-    }
-
-    const sql = `INSERT INTO ${tableName} (${columns.join(",")}) VALUES ${tuples.join(",")}`;
-    await client.query(sql, values);
-  }
+  const values = rows.flatMap((row) => columns.map((column) => normalizeValue(row[column])));
+  const tuples = rows.map((_, rowIndex) => `(${columns.map((_, columnIndex) => `$${rowIndex * columns.length + columnIndex + 1}`).join(",")})`);
+  const columnNames = columns.map((column) => `"${column.replaceAll('"', '""')}"`).join(",");
+  await client.query(`INSERT INTO ${tableName} (${columnNames}) VALUES ${tuples.join(",")}`, values);
 };
 
 const setSequences = async (client: Client) => {
@@ -286,13 +283,24 @@ const copyTable = async (
   sourceDb: Database,
   tableName: string,
   columns: string[],
-  orderBy?: string,
 ) => {
-  const sql = `SELECT ${columns.join(",")} FROM ${tableName}${orderBy ? ` ORDER BY ${orderBy}` : ""}`;
-  const rows = sourceDb.query(sql).all() as SqlRow[];
-
-  await insertRows(client, tableName, columns, rows);
-  console.log(`[migrate] ${tableName}: ${rows.length} filas`);
+  const columnNames = columns.map((column) => `"${column.replaceAll('"', '""')}"`).join(",");
+  const sql = `SELECT ${columnNames} FROM ${tableName}`;
+  let chunk: SqlRow[] = [];
+  let count = 0;
+  for (const row of sourceDb.query(sql).iterate()) {
+    chunk.push(row as SqlRow);
+    if (chunk.length === batchSize) {
+      await insertRows(client, tableName, columns, chunk);
+      count += chunk.length;
+      chunk = [];
+    }
+  }
+  await insertRows(client, tableName, columns, chunk);
+  count += chunk.length;
+  const target = await client.query(`SELECT COUNT(*) AS n FROM ${tableName}`);
+  if (Number(target.rows[0].n) !== count) throw new Error(`Recuento incorrecto: ${tableName}`);
+  console.log(`[migrate] ${tableName}: ${count} filas`);
 };
 
 const run = async () => {
@@ -302,200 +310,21 @@ const run = async () => {
   await pg.connect();
 
   try {
-    await createSchema(pg);
     await pg.query("BEGIN");
-    await truncateTarget(pg);
-
-    await copyTable(pg, sqlite, "app_state", ["key", "value", "updated_at"], "key");
-    await copyTable(
-      pg,
-      sqlite,
-      "ingestion_runs",
-      [
-        "id",
-        "fetched_at",
-        "source",
-        "success",
-        "train_count",
-        "skipped",
-        "error",
-        "provider_updated_at",
-      ],
-      "id",
-    );
-    await copyTable(
-      pg,
-      sqlite,
-      "ingestion_batches",
-      ["id", "fetched_at", "source", "provider_updated_at", "train_count", "payload_hash", "created_at"],
-      "id",
-    );
-    await copyTable(
-      pg,
-      sqlite,
-      "stations",
-      [
-        "code",
-        "name",
-        "locality",
-        "province",
-        "accessible",
-        "attended",
-        "correspondences",
-        "level",
-        "lat",
-        "lon",
-        "updated_at",
-      ],
-      "code",
-    );
-    await copyTable(
-      pg,
-      sqlite,
-      "trains_current",
-      [
-        "cod_comercial",
-        "cod_product",
-        "cod_origen",
-        "cod_destino",
-        "cod_est_ant",
-        "cod_est_sig",
-        "hora_llegada_sig_est",
-        "des_corridor",
-        "accesible",
-        "ult_retraso",
-        "latitud",
-        "longitud",
-        "gps_time",
-        "p",
-        "mat",
-        "first_seen_at",
-        "last_seen_at",
-        "last_payload_hash",
-        "last_snapshot_at",
-      ],
-      "cod_comercial",
-    );
-    await copyTable(
-      pg,
-      sqlite,
-      "train_snapshots",
-      [
-        "id",
-        "cod_comercial",
-        "captured_at",
-        "cod_product",
-        "cod_origen",
-        "cod_destino",
-        "cod_est_ant",
-        "cod_est_sig",
-        "hora_llegada_sig_est",
-        "des_corridor",
-        "accesible",
-        "ult_retraso",
-        "latitud",
-        "longitud",
-        "gps_time",
-        "p",
-        "mat",
-        "hash",
-      ],
-      "id",
-    );
-    if (sqliteHasTable(sqlite, "train_hourly_train_stats")) {
-      const hourlyColumns = [
-        "hour_epoch",
-        "cod_comercial",
-        "cod_product",
-        ...(sqliteHasColumn(sqlite, "train_hourly_train_stats", "cod_origen") ? ["cod_origen"] : []),
-        ...(sqliteHasColumn(sqlite, "train_hourly_train_stats", "cod_destino") ? ["cod_destino"] : []),
-        "des_corridor",
-        "observations",
-        "on_time_count",
-        "delayed_over_15_count",
-        "severe_count",
-        "accessible_count",
-        "sum_delay",
-        "sum_positive_delay",
-        "max_delay",
-      ];
-
-      await copyTable(
-        pg,
-        sqlite,
-        "train_hourly_train_stats",
-        hourlyColumns,
-        "hour_epoch, cod_comercial",
-      );
-    } else {
-      console.log("[migrate] train_hourly_train_stats: tabla no existe en sqlite, omitida");
+    sqlite.exec("BEGIN");
+    await createSchema(pg);
+    const tables = ["app_state", "ingestion_runs", "ingestion_batches", "stations", "trains_current",
+      "train_snapshots", "train_hourly_train_stats", "train_daily_stats", "observation_archive_chunks",
+      "train_observations", "ops_service_hourly", "ops_materialization_state"];
+    for (const table of tables) {
+      const existing = await pg.query(`SELECT 1 FROM ${table} LIMIT 1`);
+      if (existing.rows.length) throw new Error(`Destino no vacío: ${table}. Usa una base nueva; no se sobrescriben datos.`);
     }
-    await copyTable(
-      pg,
-      sqlite,
-      "train_daily_stats",
-      [
-        "day",
-        "cod_comercial",
-        "cod_product",
-        "cod_origen",
-        "cod_destino",
-        "des_corridor",
-        "observations",
-        "ahead_count",
-        "on_time_count",
-        "mild_count",
-        "medium_count",
-        "severe_count",
-        "avg_delay",
-        "max_delay",
-        "min_delay",
-        "total_distance_km",
-        "first_seen_at",
-        "last_seen_at",
-      ],
-      "day, cod_comercial",
-    );
-    if (sqliteHasTable(sqlite, "observation_archive_chunks")) {
-      await copyTable(
-        pg,
-        sqlite,
-        "observation_archive_chunks",
-        ["id", "from_ts", "to_ts", "row_count", "file_path", "sha256", "created_at"],
-        "id",
-      );
-    } else {
-      console.log("[migrate] observation_archive_chunks: tabla no existe en sqlite, omitida");
+    for (const table of tables) {
+      const columns = (sqlite.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+      if (columns.length) await copyTable(pg, sqlite, table, columns);
     }
-    await copyTable(
-      pg,
-      sqlite,
-      "train_observations",
-      [
-        "id",
-        "batch_id",
-        "cod_comercial",
-        "captured_at",
-        "cod_product",
-        "cod_origen",
-        "cod_destino",
-        "cod_est_ant",
-        "cod_est_sig",
-        "hora_llegada_sig_est",
-        "des_corridor",
-        "accesible",
-        "ult_retraso",
-        "latitud",
-        "longitud",
-        "gps_time",
-        "p",
-        "mat",
-        "hash",
-        "source",
-        "is_estimated",
-      ],
-      "id",
-    );
+    console.log("[migrate] Los JSONL.zst deben conservarse junto a la base: se copian sus rutas y manifiesto, no los archivos.");
 
     await setSequences(pg);
     await pg.query("COMMIT");
@@ -506,6 +335,7 @@ const run = async () => {
     await pg.query("ROLLBACK");
     throw error;
   } finally {
+    if (sqlite.inTransaction) sqlite.exec("ROLLBACK");
     sqlite.close();
     await pg.end();
   }

@@ -29,6 +29,8 @@ logs/
 data/**
 
 # tool caches
+__pycache__/
+*.py[cod]
 .cache/
 .eslintcache
 

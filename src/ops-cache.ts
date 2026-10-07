@@ -1,42 +1,20 @@
-import { dirname, join } from "node:path";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { config } from "./config";
 import { DB } from "./db";
+import { getDisplayRefreshInterval, writeJsonAtomic } from "./utils";
 
 export const OPS_PRESET_HOURS = [24, 168, 720] as const;
 type OpsPresetHours = (typeof OPS_PRESET_HOURS)[number];
-type OpsPayload = ReturnType<DB["getOpsMetrics"]>;
-
-export interface OpsCacheEntry extends OpsPayload {}
+export type OpsCacheEntry = ReturnType<DB["getOpsMetrics"]>;
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
 export class OpsPresetCache {
-  private readonly db: DB;
-
-  constructor(db: DB) {
-    this.db = db;
-  }
-
-  isPresetHours(hours: number): hours is OpsPresetHours {
-    return OPS_PRESET_HOURS.includes(hours as OpsPresetHours);
-  }
-
-  getRefreshIntervalSeconds(hours: OpsPresetHours): number {
-    if (hours === 24) {
-      return config.displayCache24Seconds;
-    }
-
-    if (hours === 168) {
-      return config.displayCache168Seconds;
-    }
-
-    return config.displayCache720Seconds;
-  }
+  constructor(private readonly db: DB, private readonly compute?: (hours: OpsPresetHours) => Promise<OpsCacheEntry>) {}
 
   async refreshDue(currentEpoch = nowEpoch()) {
     for (const hours of OPS_PRESET_HOURS) {
-      const interval = this.getRefreshIntervalSeconds(hours);
+      const interval = getDisplayRefreshInterval(hours);
       const cached = await this.read(hours);
       if (!cached || currentEpoch - cached.generatedAtEpoch >= interval) {
         await this.generate(hours);
@@ -45,9 +23,10 @@ export class OpsPresetCache {
   }
 
   async generate(hours: OpsPresetHours): Promise<OpsCacheEntry> {
+    if (this.compute) return this.compute(hours);
     const payload = this.db.getOpsMetrics(hours);
     const filePath = this.getFilePath(hours);
-    await this.writeJsonAtomic(filePath, JSON.stringify(payload));
+    await writeJsonAtomic(filePath, JSON.stringify(payload));
     console.log(`[ops-cache] ${hours}h actualizado`);
     return payload;
   }
@@ -79,10 +58,4 @@ export class OpsPresetCache {
     return join(config.displayCacheDir, `ops.${hours}h.json`);
   }
 
-  private async writeJsonAtomic(filePath: string, content: string) {
-    await mkdir(dirname(filePath), { recursive: true });
-    const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(tempPath, content, "utf8");
-    await rename(tempPath, filePath);
-  }
 }

@@ -7,7 +7,8 @@
     "start": "bun src/index.ts",
     "dev": "bun --watch src/index.ts",
     "check": "bunx tsc --noEmit",
-    "migrate:pg": "bun scripts/migrate-sqlite-to-postgres.ts"
+    "migrate:pg": "bun scripts/migrate-sqlite-to-postgres.ts",
+    "test": "bun scripts/check-regressions.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

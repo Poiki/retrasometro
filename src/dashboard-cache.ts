@@ -1,13 +1,12 @@
-import { dirname, join } from "node:path";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { config } from "./config";
 import { DB } from "./db";
+import { getDisplayRefreshInterval, writeJsonAtomic } from "./utils";
 
 export const DASHBOARD_PRESET_HOURS = [24, 168, 720] as const;
 
 type PresetHours = (typeof DASHBOARD_PRESET_HOURS)[number];
 type HistoricalPayload = ReturnType<DB["getHistoricalStats"]>;
-type TopCorridorsPayload = ReturnType<DB["getTopCorridors"]>;
 type CorridorMetaPayload = ReturnType<DB["getCorridorMeta"]>;
 
 export interface DashboardHistoricalCacheEntry {
@@ -15,38 +14,23 @@ export interface DashboardHistoricalCacheEntry {
   generatedAt: string;
   generatedAtEpoch: number;
   historical: HistoricalPayload;
-  topCorridors?: TopCorridorsPayload;
   corridorMeta?: CorridorMetaPayload;
 }
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
 
 export class DashboardPresetCache {
-  private readonly db: DB;
+  private readonly pending = new Map<PresetHours, Promise<DashboardHistoricalCacheEntry>>();
 
-  constructor(db: DB) {
-    this.db = db;
-  }
+  constructor(private readonly db: DB, private readonly compute?: (hours: PresetHours) => Promise<DashboardHistoricalCacheEntry>) {}
 
   isPresetHours(hours: number): hours is PresetHours {
     return DASHBOARD_PRESET_HOURS.includes(hours as PresetHours);
   }
 
-  getRefreshIntervalSeconds(hours: PresetHours): number {
-    if (hours === 24) {
-      return config.displayCache24Seconds;
-    }
-
-    if (hours === 168) {
-      return config.displayCache168Seconds;
-    }
-
-    return config.displayCache720Seconds;
-  }
-
   async refreshDue(currentEpoch = nowEpoch()) {
     for (const hours of DASHBOARD_PRESET_HOURS) {
-      const interval = this.getRefreshIntervalSeconds(hours);
+      const interval = getDisplayRefreshInterval(hours);
       const cached = await this.read(hours);
       if (!cached || currentEpoch - cached.generatedAtEpoch >= interval) {
         await this.generate(hours, currentEpoch);
@@ -55,20 +39,25 @@ export class DashboardPresetCache {
   }
 
   async generate(hours: PresetHours, generatedAtEpoch = nowEpoch()): Promise<DashboardHistoricalCacheEntry> {
+    if (this.compute) {
+      const existing = this.pending.get(hours);
+      if (existing) return existing;
+      const job = this.compute(hours).finally(() => this.pending.delete(hours));
+      this.pending.set(hours, job);
+      return job;
+    }
     const historical = this.db.getHistoricalStats(hours);
-    const topCorridors = this.db.getTopCorridors(8);
     const corridorMeta = this.db.getCorridorMeta();
     const entry: DashboardHistoricalCacheEntry = {
       historyHours: hours,
       generatedAt: new Date(generatedAtEpoch * 1000).toISOString(),
       generatedAtEpoch,
       historical,
-      topCorridors,
       corridorMeta,
     };
 
     const filePath = this.getFilePath(hours);
-    await this.writeJsonAtomic(filePath, JSON.stringify(entry));
+    await writeJsonAtomic(filePath, JSON.stringify(entry));
     console.log(`[display-cache] dashboard ${hours}h actualizado`);
 
     return entry;
@@ -96,10 +85,4 @@ export class DashboardPresetCache {
     return join(config.displayCacheDir, `dashboard.${hours}h.json`);
   }
 
-  private async writeJsonAtomic(filePath: string, content: string) {
-    await mkdir(dirname(filePath), { recursive: true });
-    const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    await writeFile(tempPath, content, "utf8");
-    await rename(tempPath, filePath);
-  }
 }

@@ -198,6 +198,8 @@ const OPS_BACKFILL_STATUS_COMPLETED = "completed";
 export class DB {
   private readonly db: Database;
   private readonly dbPath: string;
+  private archiveRange: { since: number; until: number; version: number } | null = null;
+  private readonly observationColumns: string[];
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -206,12 +208,27 @@ export class DB {
     this.configure();
     this.createSchema();
     this.ensureSchemaUpgrades();
+    this.observationColumns = (this.db.query(`PRAGMA table_info(train_observations)`).all() as Array<{ name: string }>).map((row) => row.name);
+    this.db.exec(`CREATE TEMP TABLE archived_observations AS SELECT * FROM train_observations WHERE 0;
+      CREATE INDEX temp.idx_archived_train_time ON archived_observations(cod_comercial, captured_at, source);
+      CREATE INDEX temp.idx_archived_time ON archived_observations(captured_at);
+      CREATE TEMP VIEW observation_detail AS
+        SELECT * FROM main.train_observations UNION ALL
+        SELECT a.* FROM archived_observations a WHERE NOT EXISTS (
+          SELECT 1 FROM main.train_observations live WHERE ${this.observationColumns.filter((column) => column !== "id").map((column) => `live.${column} IS a.${column}`).join(" AND ")}
+          AND (a.id IS NULL OR live.id = a.id)
+        );`);
+  }
+
+  transaction<T>(callback: () => T): T {
+    return this.db.transaction(callback)();
   }
 
   private configure() {
     this.db.exec(`
+      PRAGMA busy_timeout = 5000;
       PRAGMA journal_mode = WAL;
-      PRAGMA synchronous = NORMAL;
+      PRAGMA synchronous = FULL;
       PRAGMA temp_store = MEMORY;
       PRAGMA cache_size = -64000;
       PRAGMA foreign_keys = ON;
@@ -335,8 +352,9 @@ export class DB {
         is_estimated INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(batch_id) REFERENCES ingestion_batches(id) ON DELETE SET NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_observations_train_time ON train_observations(cod_comercial, captured_at DESC);
       CREATE INDEX IF NOT EXISTS idx_observations_time ON train_observations(captured_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_observations_official_time ON train_observations(captured_at DESC)
+        WHERE des_corridor IS NOT NULL AND TRIM(des_corridor) <> '';
       CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_unique ON train_observations(cod_comercial, captured_at, source);
 
       CREATE TABLE IF NOT EXISTS observation_archive_chunks (
@@ -472,11 +490,9 @@ export class DB {
     ];
 
     for (const statement of alterStatements) {
-      try {
-        this.db.exec(statement);
-      } catch {
-        // Ignore if the column already exists or table is unavailable during first bootstrap.
-      }
+      const [, table, column] = statement.match(/^ALTER TABLE (\w+) ADD COLUMN (\w+)/)!;
+      const columns = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!columns.some((row) => row.name === column)) this.db.exec(statement);
     }
 
     this.db.exec(
@@ -515,11 +531,7 @@ export class DB {
       );
     `);
 
-    try {
-      this.db.exec(`DROP INDEX IF EXISTS idx_observations_batch;`);
-    } catch {
-      // Ignore if index was already removed.
-    }
+    this.db.exec(`DROP INDEX IF EXISTS idx_observations_batch;`);
   }
 
   close() {
@@ -2219,6 +2231,53 @@ export class DB {
     };
   }
 
+  private readObservationArchive(chunk: { file_path: string; sha256: string; row_count: number; from_ts: number; to_ts: number }) {
+    const bytes = readFileSync(chunk.file_path);
+    if (createHash("sha256").update(bytes).digest("hex") !== chunk.sha256) {
+      throw new Error(`checksum incorrecto: ${chunk.file_path}`);
+    }
+    const decoded = Bun.spawnSync(["zstd", "-q", "-d", "-c", chunk.file_path]);
+    if (decoded.exitCode !== 0) throw new Error(`archivo ilegible: ${chunk.file_path}`);
+    const rows = Buffer.from(decoded.stdout).toString("utf8").trim().split("\n").filter(Boolean).map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      if (!row || typeof row !== "object" || Array.isArray(row) ||
+          this.observationColumns.some((column) => column !== "id" && !Object.hasOwn(row, column)) ||
+          typeof row.cod_comercial !== "string" || typeof row.source !== "string" ||
+          !Number.isSafeInteger(row.captured_at) ||
+          (row.id !== undefined && !Number.isSafeInteger(row.id))) {
+        throw new Error(`fila inválida: ${chunk.file_path}`);
+      }
+      return row;
+    });
+    const bounds = rows.reduce((range, row) => [Math.min(range[0]!, Number(row.captured_at)), Math.max(range[1]!, Number(row.captured_at))], [Infinity, -Infinity]);
+    if (rows.length !== chunk.row_count || rows.length === 0 ||
+        bounds[0] !== chunk.from_ts || bounds[1] !== chunk.to_ts) {
+      throw new Error(`manifiesto incorrecto: ${chunk.file_path}`);
+    }
+    return rows;
+  }
+
+  private loadObservationArchives(since: number, until: number) {
+    const version = (this.db.query(`SELECT COALESCE(MAX(id), 0) AS n FROM observation_archive_chunks`).get() as { n: number }).n;
+    if (this.archiveRange?.version === version && since >= this.archiveRange.since && until <= this.archiveRange.until) return;
+    // ponytail: restore only the requested range; indexed cold storage if archive queries become frequent.
+    this.db.exec(`DELETE FROM temp.archived_observations`);
+    this.archiveRange = null;
+    const chunks = this.db.query(`SELECT * FROM observation_archive_chunks WHERE from_ts <= ? AND to_ts >= ? ORDER BY from_ts`).all(until, since) as Array<{ file_path: string; sha256: string; row_count: number; from_ts: number; to_ts: number }>;
+    const insert = this.db.query(`INSERT INTO temp.archived_observations (${this.observationColumns.join(",")}) VALUES (${this.observationColumns.map(() => "?").join(",")})`);
+    for (const chunk of chunks) {
+      const rows = this.readObservationArchive(chunk);
+      this.transaction(() => {
+        for (const row of rows) {
+          if (Number(row.captured_at) >= since && Number(row.captured_at) <= until) {
+            insert.run(...this.observationColumns.map((column) => (row[column] ?? null) as string | number | null));
+          }
+        }
+      });
+    }
+    this.archiveRange = { since, until, version };
+  }
+
   archiveObservationsBefore(cutoffEpoch: number, archiveDir: string, zstdLevel: number): ArchiveObservationsResult {
     const hourCutoff = Math.floor(cutoffEpoch / 3600) * 3600;
 
@@ -2273,27 +2332,17 @@ export class DB {
       const existing = this.db
         .query(
           `
-        SELECT from_ts, to_ts, row_count
+        SELECT *
         FROM observation_archive_chunks
         WHERE file_path = ?
         LIMIT 1
         `,
         )
-        .get(archivePath) as { from_ts: number; to_ts: number; row_count: number } | undefined;
+        .get(archivePath) as { file_path: string; sha256: string; from_ts: number; to_ts: number; row_count: number } | undefined;
 
       if (existing) {
-        // Idempotencia: si el manifiesto existe, eliminamos cualquier residuo local de ese rango.
-        const deletedResidual = this.db
-          .query(`DELETE FROM train_observations WHERE captured_at >= ? AND captured_at <= ?`)
-          .run(existing.from_ts, existing.to_ts);
-        if (deletedResidual.changes > existing.row_count) {
-          throw new Error(
-            `residual delete mismatch en ${archivePath}: esperado<=${existing.row_count} actual=${deletedResidual.changes}`,
-          );
-        }
-        if (deletedResidual.changes > 0) {
-          deletedRows += deletedResidual.changes;
-        }
+        this.readObservationArchive(existing);
+        // A manifest does not prove that any remaining local row is already archived.
         skippedChunks += 1;
         continue;
       }
@@ -2302,6 +2351,7 @@ export class DB {
         .query(
           `
         SELECT
+          id,
           batch_id,
           cod_comercial,
           captured_at,
@@ -2366,6 +2416,10 @@ export class DB {
 
         const fileBuffer = readFileSync(compressedTempPath);
         const sha256 = createHash("sha256").update(fileBuffer).digest("hex");
+        const decoded = Bun.spawnSync(["zstd", "-q", "-d", "-c", compressedTempPath]);
+        if (decoded.exitCode !== 0 || Buffer.from(decoded.stdout).toString("utf8") !== rawContent) {
+          throw new Error(`verificación de compresión fallida: ${archivePath}`);
+        }
 
         const fileFd = openSync(compressedTempPath, "r");
         fsyncSync(fileFd);
@@ -2393,14 +2447,10 @@ export class DB {
             )
             .run(bucket.from_ts, bucket.to_ts, rows.length, archivePath, sha256, archiveCreatedAt);
 
-          const deleted = this.db
-            .query(`DELETE FROM train_observations WHERE captured_at >= ? AND captured_at <= ?`)
-            .run(bucket.from_ts, bucket.to_ts);
-
-          if (deleted.changes !== rows.length) {
-            throw new Error(
-              `delete mismatch en ${archivePath}: esperado=${rows.length} actual=${deleted.changes}`,
-            );
+          const remove = this.db.query(`DELETE FROM train_observations WHERE ${this.observationColumns.map((column) => `${column} IS ?`).join(" AND ")}`);
+          for (const row of rows) {
+            const deleted = remove.run(...this.observationColumns.map((column) => (row[column] ?? null) as string | number | null));
+            if (deleted.changes !== 1) throw new Error(`fila modificada durante el archivado: ${archivePath}`);
           }
         });
         persist();
@@ -2664,6 +2714,7 @@ export class DB {
   private getWorseningVs7d(until: number) {
     const since24 = until - 24 * 3600;
     const since7d = until - 7 * 24 * 3600;
+    this.loadObservationArchives(Math.min(since7d, this.archiveRange?.since ?? since7d), Math.max(until, this.archiveRange?.until ?? until));
 
     const row = this.db
       .query(
@@ -2675,7 +2726,7 @@ export class DB {
         COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 15 THEN 1 ELSE 0 END), 0) AS delayed_7d,
         COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 60 THEN 1 ELSE 0 END), 0) AS severe_24h,
         COALESCE(SUM(CASE WHEN captured_at >= ? AND ult_retraso > 60 THEN 1 ELSE 0 END), 0) AS severe_7d
-      FROM train_observations
+      FROM observation_detail
       WHERE captured_at >= ? AND captured_at <= ?
       `,
       )
@@ -2790,6 +2841,7 @@ export class DB {
 
   getTrainHistory(codComercial: string, hours: number) {
     const since = Math.floor(Date.now() / 1000) - Math.max(1, hours) * 3600;
+    this.loadObservationArchives(since, Math.floor(Date.now() / 1000));
 
     const snapshots = this.db
       .query(
@@ -2846,7 +2898,7 @@ export class DB {
         hora_llegada_sig_est,
         source,
         is_estimated
-      FROM train_observations
+      FROM observation_detail
       WHERE cod_comercial = ? AND captured_at >= ?
       ORDER BY captured_at ASC
       LIMIT 20000
@@ -2858,6 +2910,7 @@ export class DB {
   }
 
   recoverObservationsFromSnapshots(sinceEpoch: number): number {
+    this.loadObservationArchives(sinceEpoch, Math.floor(Date.now() / 1000));
     const result = this.db
       .query(
         `
@@ -2906,6 +2959,10 @@ export class DB {
         1 AS is_estimated
       FROM train_snapshots s
       WHERE s.captured_at >= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM observation_detail o
+          WHERE o.cod_comercial = s.cod_comercial AND o.captured_at = s.captured_at
+        )
       `,
       )
       .run(sinceEpoch);
@@ -2917,6 +2974,7 @@ export class DB {
     const now = Math.floor(Date.now() / 1000);
     const safeHours = Math.max(1, Math.min(720, Math.trunc(hours)));
     const since = now - safeHours * 3600;
+    this.loadObservationArchives(since, now);
 
     const observations = this.db
       .query(
@@ -2927,7 +2985,7 @@ export class DB {
         COALESCE(SUM(is_estimated), 0) AS estimated_total,
         MIN(captured_at) AS min_t,
         MAX(captured_at) AS max_t
-      FROM train_observations
+      FROM observation_detail
       WHERE captured_at >= ?
       `,
       )
@@ -3331,7 +3389,101 @@ export class DB {
     return this.getHistoricalStatsByObservationRange(safeSince, safeUntil);
   }
 
+  private getHistoricalContext(rangeRowsCte: string, rangeParams: number[], since: number, until: number) {
+    const safeHours = Math.max(1, Math.round((until - since) / 3600));
+    const sinceDay = new Date(since * 1000).toISOString().slice(0, 10);
+    const untilDay = new Date(until * 1000).toISOString().slice(0, 10);
+    const corridorAggregates = this.getCorridorAggregateRows(rangeRowsCte, rangeParams);
+    const topProblematicCorridor = corridorAggregates
+      .slice()
+      .sort(
+        (a, b) =>
+          b.accumulated_delay_minutes_int - a.accumulated_delay_minutes_int ||
+          b.observations - a.observations,
+      )[0];
+
+    const thresholds = this.getAccountabilityThresholds(safeHours);
+    const criticalRoutes = corridorAggregates
+      .filter((row) => row.observations >= thresholds.minRouteObservations)
+      .sort(
+        (a, b) =>
+          b.delayed_over_15_pct - a.delayed_over_15_pct ||
+          b.severe_pct - a.severe_pct ||
+          b.observations - a.observations,
+      )
+      .slice(0, 12)
+      .map((row) => ({
+        axisKey: row.axis_key,
+        axisLabel: row.axis_label,
+        source: row.source,
+        observations: row.observations,
+        avgDelay: row.avg_delay,
+        maxDelay: row.max_delay,
+        delayed15Pct: row.delayed_over_15_pct,
+        severe60Pct: row.severe_pct,
+      }));
+
+    const repeatOffenders = this.getRepeatOffenders(
+      rangeRowsCte,
+      rangeParams,
+      thresholds.minTrainObservations,
+    ).map((row) => ({
+      codComercial: row.cod_comercial,
+      codProduct: row.cod_product,
+      observations: row.observations,
+      avgDelay: row.avg_delay,
+      maxDelay: row.max_delay,
+      delayed15Pct: row.delayed_over_15_pct,
+      severe60Pct: row.severe_pct,
+      origin: row.origin,
+      destination: row.destination,
+    }));
+
+    const worseningVs7d = this.getWorseningVs7d(until);
+
+    const dailyTrend = this.db
+      .query(
+        `
+      SELECT
+        day,
+        COALESCE(SUM(observations), 0) AS observations,
+        COALESCE(ROUND(SUM(avg_delay * observations) / NULLIF(SUM(observations), 0), 2), 0) AS weighted_avg_delay,
+        COALESCE(MAX(max_delay), 0) AS peak_delay,
+        COALESCE(ROUND(SUM(total_distance_km), 2), 0) AS km_tracked
+      FROM train_daily_stats
+      WHERE day >= ? AND day <= ?
+      GROUP BY day
+      ORDER BY day ASC
+      `,
+      )
+      .all(sinceDay, untilDay);
+
+    const ingestion = this.db
+      .query(
+        `
+      SELECT
+        COUNT(*) AS batches,
+        COALESCE(ROUND(AVG(train_count), 2), 0) AS avg_trains_per_batch,
+        COALESCE(ROUND(MIN(train_count), 2), 0) AS min_trains_per_batch,
+        COALESCE(ROUND(MAX(train_count), 2), 0) AS max_trains_per_batch
+      FROM ingestion_batches
+      WHERE fetched_at >= ? AND fetched_at <= ?
+      `,
+      )
+      .get(since, until) as
+      | {
+          batches: number;
+          avg_trains_per_batch: number;
+          min_trains_per_batch: number;
+          max_trains_per_batch: number;
+        }
+      | undefined;
+
+    return { topProblematicCorridor, criticalRoutes, repeatOffenders, worseningVs7d, dailyTrend, ingestion };
+  }
+
   private getHistoricalStatsByHourlyRange(since: number, until: number) {
+    this.loadObservationArchives(since, until);
     const safeHours = Math.max(1, Math.round((until - since) / 3600));
     const startHour = Math.floor(since / 3600) * 3600;
     const endHour = Math.floor(until / 3600) * 3600;
@@ -3350,8 +3502,6 @@ export class DB {
       secondEdgeFrom,
       secondEdgeTo,
     ];
-    const sinceDay = new Date(since * 1000).toISOString().slice(0, 10);
-    const untilDay = new Date(until * 1000).toISOString().slice(0, 10);
 
     const rangeRowsCte = `
       WITH range_rows AS (
@@ -3390,7 +3540,7 @@ export class DB {
           SUM(ult_retraso) AS sum_delay,
           SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END) AS sum_positive_delay,
           MAX(ult_retraso) AS max_delay
-        FROM train_observations
+        FROM observation_detail
         WHERE (captured_at >= ? AND captured_at <= ?)
           OR (captured_at >= ? AND captured_at <= ?)
         GROUP BY hour_epoch, cod_comercial
@@ -3464,53 +3614,8 @@ export class DB {
         }
       | undefined;
 
-    const corridorAggregates = this.getCorridorAggregateRows(rangeRowsCte, rangeParams);
-    const topProblematicCorridor = corridorAggregates
-      .slice()
-      .sort(
-        (a, b) =>
-          b.accumulated_delay_minutes_int - a.accumulated_delay_minutes_int ||
-          b.observations - a.observations,
-      )[0];
-
-    const thresholds = this.getAccountabilityThresholds(safeHours);
-    const criticalRoutes = corridorAggregates
-      .filter((row) => row.observations >= thresholds.minRouteObservations)
-      .sort(
-        (a, b) =>
-          b.delayed_over_15_pct - a.delayed_over_15_pct ||
-          b.severe_pct - a.severe_pct ||
-          b.observations - a.observations,
-      )
-      .slice(0, 12)
-      .map((row) => ({
-        axisKey: row.axis_key,
-        axisLabel: row.axis_label,
-        source: row.source,
-        observations: row.observations,
-        avgDelay: row.avg_delay,
-        maxDelay: row.max_delay,
-        delayed15Pct: row.delayed_over_15_pct,
-        severe60Pct: row.severe_pct,
-      }));
-
-    const repeatOffenders = this.getRepeatOffenders(
-      rangeRowsCte,
-      rangeParams,
-      thresholds.minTrainObservations,
-    ).map((row) => ({
-      codComercial: row.cod_comercial,
-      codProduct: row.cod_product,
-      observations: row.observations,
-      avgDelay: row.avg_delay,
-      maxDelay: row.max_delay,
-      delayed15Pct: row.delayed_over_15_pct,
-      severe60Pct: row.severe_pct,
-      origin: row.origin,
-      destination: row.destination,
-    }));
-
-    const worseningVs7d = this.getWorseningVs7d(until);
+    const { topProblematicCorridor, criticalRoutes, repeatOffenders, worseningVs7d, dailyTrend, ingestion } =
+      this.getHistoricalContext(rangeRowsCte, rangeParams, since, until);
 
     const byProduct = this.db
       .query(
@@ -3530,44 +3635,6 @@ export class DB {
       `,
       )
       .all(...rangeParams);
-
-    const dailyTrend = this.db
-      .query(
-        `
-      SELECT
-        day,
-        COALESCE(SUM(observations), 0) AS observations,
-        COALESCE(ROUND(SUM(avg_delay * observations) / NULLIF(SUM(observations), 0), 2), 0) AS weighted_avg_delay,
-        COALESCE(MAX(max_delay), 0) AS peak_delay,
-        COALESCE(ROUND(SUM(total_distance_km), 2), 0) AS km_tracked
-      FROM train_daily_stats
-      WHERE day >= ? AND day <= ?
-      GROUP BY day
-      ORDER BY day ASC
-      `,
-      )
-      .all(sinceDay, untilDay);
-
-    const ingestion = this.db
-      .query(
-        `
-      SELECT
-        COUNT(*) AS batches,
-        COALESCE(ROUND(AVG(train_count), 2), 0) AS avg_trains_per_batch,
-        COALESCE(ROUND(MIN(train_count), 2), 0) AS min_trains_per_batch,
-        COALESCE(ROUND(MAX(train_count), 2), 0) AS max_trains_per_batch
-      FROM ingestion_batches
-      WHERE fetched_at >= ? AND fetched_at <= ?
-      `,
-      )
-      .get(since, until) as
-      | {
-          batches: number;
-          avg_trains_per_batch: number;
-          min_trains_per_batch: number;
-          max_trains_per_batch: number;
-        }
-      | undefined;
 
     return {
       hours: safeHours,
@@ -3633,9 +3700,8 @@ export class DB {
   }
 
   private getHistoricalStatsByObservationRange(since: number, until: number) {
+    this.loadObservationArchives(since, until);
     const safeHours = Math.max(1, Math.round((until - since) / 3600));
-    const sinceDay = new Date(since * 1000).toISOString().slice(0, 10);
-    const untilDay = new Date(until * 1000).toISOString().slice(0, 10);
     const rangeParams = [since, until];
 
     const rangeRowsCte = `
@@ -3655,7 +3721,7 @@ export class DB {
           SUM(ult_retraso) AS sum_delay,
           SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END) AS sum_positive_delay,
           MAX(ult_retraso) AS max_delay
-        FROM train_observations
+        FROM observation_detail
         WHERE captured_at >= ? AND captured_at <= ?
         GROUP BY hour_epoch, cod_comercial
       )
@@ -3676,7 +3742,7 @@ export class DB {
         CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes,
         MIN(captured_at) AS min_ts,
         MAX(captured_at) AS max_ts
-      FROM train_observations
+      FROM observation_detail
       WHERE captured_at >= ? AND captured_at <= ?
       `,
       )
@@ -3710,7 +3776,7 @@ export class DB {
         COALESCE(MAX(ult_retraso), 0) AS max_delay,
         COUNT(*) AS observations,
         COUNT(DISTINCT cod_comercial) AS trains
-      FROM train_observations
+      FROM observation_detail
       WHERE captured_at >= ? AND captured_at <= ?
       GROUP BY cod_product
       ORDER BY COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC, observations DESC
@@ -3728,53 +3794,8 @@ export class DB {
         }
       | undefined;
 
-    const corridorAggregates = this.getCorridorAggregateRows(rangeRowsCte, rangeParams);
-    const topProblematicCorridor = corridorAggregates
-      .slice()
-      .sort(
-        (a, b) =>
-          b.accumulated_delay_minutes_int - a.accumulated_delay_minutes_int ||
-          b.observations - a.observations,
-      )[0];
-
-    const thresholds = this.getAccountabilityThresholds(safeHours);
-    const criticalRoutes = corridorAggregates
-      .filter((row) => row.observations >= thresholds.minRouteObservations)
-      .sort(
-        (a, b) =>
-          b.delayed_over_15_pct - a.delayed_over_15_pct ||
-          b.severe_pct - a.severe_pct ||
-          b.observations - a.observations,
-      )
-      .slice(0, 12)
-      .map((row) => ({
-        axisKey: row.axis_key,
-        axisLabel: row.axis_label,
-        source: row.source,
-        observations: row.observations,
-        avgDelay: row.avg_delay,
-        maxDelay: row.max_delay,
-        delayed15Pct: row.delayed_over_15_pct,
-        severe60Pct: row.severe_pct,
-      }));
-
-    const repeatOffenders = this.getRepeatOffenders(
-      rangeRowsCte,
-      rangeParams,
-      thresholds.minTrainObservations,
-    ).map((row) => ({
-      codComercial: row.cod_comercial,
-      codProduct: row.cod_product,
-      observations: row.observations,
-      avgDelay: row.avg_delay,
-      maxDelay: row.max_delay,
-      delayed15Pct: row.delayed_over_15_pct,
-      severe60Pct: row.severe_pct,
-      origin: row.origin,
-      destination: row.destination,
-    }));
-
-    const worseningVs7d = this.getWorseningVs7d(until);
+    const { topProblematicCorridor, criticalRoutes, repeatOffenders, worseningVs7d, dailyTrend, ingestion } =
+      this.getHistoricalContext(rangeRowsCte, rangeParams, since, until);
 
     const byProduct = this.db
       .query(
@@ -3786,7 +3807,7 @@ export class DB {
         COALESCE(ROUND(AVG(ult_retraso), 2), 0) AS avg_delay,
         COALESCE(MAX(ult_retraso), 0) AS max_delay,
         CAST(COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) AS TEXT) AS accumulated_delay_minutes
-      FROM train_observations
+      FROM observation_detail
       WHERE captured_at >= ? AND captured_at <= ?
       GROUP BY cod_product
       ORDER BY observations DESC, COALESCE(SUM(CASE WHEN ult_retraso > 0 THEN ult_retraso ELSE 0 END), 0) DESC
@@ -3794,44 +3815,6 @@ export class DB {
       `,
       )
       .all(since, until);
-
-    const dailyTrend = this.db
-      .query(
-        `
-      SELECT
-        day,
-        COALESCE(SUM(observations), 0) AS observations,
-        COALESCE(ROUND(SUM(avg_delay * observations) / NULLIF(SUM(observations), 0), 2), 0) AS weighted_avg_delay,
-        COALESCE(MAX(max_delay), 0) AS peak_delay,
-        COALESCE(ROUND(SUM(total_distance_km), 2), 0) AS km_tracked
-      FROM train_daily_stats
-      WHERE day >= ? AND day <= ?
-      GROUP BY day
-      ORDER BY day ASC
-      `,
-      )
-      .all(sinceDay, untilDay);
-
-    const ingestion = this.db
-      .query(
-        `
-      SELECT
-        COUNT(*) AS batches,
-        COALESCE(ROUND(AVG(train_count), 2), 0) AS avg_trains_per_batch,
-        COALESCE(ROUND(MIN(train_count), 2), 0) AS min_trains_per_batch,
-        COALESCE(ROUND(MAX(train_count), 2), 0) AS max_trains_per_batch
-      FROM ingestion_batches
-      WHERE fetched_at >= ? AND fetched_at <= ?
-      `,
-      )
-      .get(since, until) as
-      | {
-          batches: number;
-          avg_trains_per_batch: number;
-          min_trains_per_batch: number;
-          max_trains_per_batch: number;
-        }
-      | undefined;
 
     return {
       hours: safeHours,

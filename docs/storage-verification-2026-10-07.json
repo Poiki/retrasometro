@@ -1,0 +1,90 @@
+{
+  "started_at": "2026-10-07T14:39:42Z",
+  "tables": {
+    "app_state": {
+      "rows": 4,
+      "sha256_values": "b0fe5df45bd375be7540e3a5fe0d7309a145086e3921d6c0ba1673243d475059"
+    },
+    "ingestion_batches": {
+      "rows": 15869,
+      "sha256_values": "8b64eecb85e6df7e35240805cfe1ba916d81d1ba4e5e1398f041a0b754d1934a"
+    },
+    "ingestion_runs": {
+      "rows": 36741,
+      "sha256_values": "f9fa51c11b2c5bafbe15610d85cad29b434f9995c0d6e95c6b08b79c06759e34"
+    },
+    "observation_archive_chunks": {
+      "rows": 508,
+      "sha256_values": "db893d4d0246555a6141f3c485d79c25cedf531321de04b3d5080acd57021add"
+    },
+    "ops_materialization_state": {
+      "rows": 5,
+      "sha256_values": "c39707f64087766660ce9a564bf838edea9b980cd3df2af86dc784c53ab67244"
+    },
+    "ops_service_hourly": {
+      "rows": 679853,
+      "sha256_values": "a9653b67d8c220b33ec4019c5fc676b672ccbeeadbb84734268f0c16316d40db"
+    },
+    "stations": {
+      "rows": 1512,
+      "sha256_values": "dba841425eceaeede21090e4f16019639ddbd0977fa5dd156f8c2dce96d36847"
+    },
+    "train_daily_stats": {
+      "rows": 192389,
+      "sha256_values": "7ad0b0e0b20d29e687333928124d8b0aa46220f48bb800035d5e0a18ab45f22c"
+    },
+    "train_hourly_train_stats": {
+      "rows": 660159,
+      "sha256_values": "2ba16f4d13984374ed873eb46253d7dc5113712f23fbb4a82a5b8d43df0bfc65"
+    },
+    "train_observations": {
+      "rows": 24884752,
+      "sha256_values": "f2c4a59bb893f53b576ed73d2a255863e06c0a1a74297762e613a16a4b04301e"
+    },
+    "train_snapshots": {
+      "rows": 580427,
+      "sha256_values": "d12ae194c854ca1cf9edad145e49eabaa76e693cf8aca17e6ba11ba5d98fb3a3"
+    },
+    "trains_current": {
+      "rows": 172,
+      "sha256_values": "b0fcf89a5e0509c3fe03b9f16250efe2214fcb3bfcc1a670cb2c30f05174a6a5"
+    }
+  },
+  "before_bytes": 6249504768,
+  "counts_before": {
+    "app_state": 4,
+    "ingestion_batches": 15869,
+    "ingestion_runs": 36741,
+    "observation_archive_chunks": 508,
+    "ops_materialization_state": 5,
+    "ops_service_hourly": 679853,
+    "stations": 1512,
+    "train_daily_stats": 192389,
+    "train_hourly_train_stats": 660159,
+    "train_observations": 24884752,
+    "train_snapshots": 580427,
+    "trains_current": 172
+  },
+  "after_bytes": 4702347264,
+  "counts_after": {
+    "app_state": 4,
+    "ingestion_batches": 15869,
+    "ingestion_runs": 36741,
+    "observation_archive_chunks": 508,
+    "ops_materialization_state": 5,
+    "ops_service_hourly": 679853,
+    "stations": 1512,
+    "train_daily_stats": 192389,
+    "train_hourly_train_stats": 660159,
+    "train_observations": 24884752,
+    "train_snapshots": 580427,
+    "trains_current": 172
+  },
+  "service_pause_seconds": 252.89,
+  "archive_chunks_verified": 508,
+  "sqlite_backup_sha256": "a1c64e38da9eaeb5afd2211d49a0e9e1d811f7102be1ded0fb8f5a9670418b88",
+  "backup": "/root/retrasometro/data/backups/20261007T143942Z/backup.tar.zst",
+  "backup_bytes": 1754798290,
+  "backup_sha256": "7c8c6cbd53c8a259ebef0cfe61f7bf37137826c55de0cf06dab738f7c3687a0f",
+  "restore_verified": true
+}

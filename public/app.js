@@ -352,7 +352,6 @@ const state = {
   apiMinIntervalMs: 200,
   requestQueue: Promise.resolve(),
   lastRequestAtMs: 0,
-  lastUserActivityAtMs: Date.now(),
   lastAppliedSuccessAt: 0,
   hasPendingSync: false,
   trainsItems: [],
@@ -362,8 +361,7 @@ const state = {
   rawTimer: null,
 };
 
-const AUTO_REFRESH_MS = 20_000;
-const INACTIVITY_SYNC_MS = 60_000;
+const AUTO_REFRESH_MS = 5_000;
 
 let latestDashboard = null;
 let numberFmt = new Intl.NumberFormat("es-ES");
@@ -488,12 +486,6 @@ const updateTextContent = (id, value) => {
     element.textContent = value;
   }
 };
-
-const markUserActivity = () => {
-  state.lastUserActivityAtMs = Date.now();
-};
-
-const isUserInactive = () => Date.now() - state.lastUserActivityAtMs >= INACTIVITY_SYNC_MS;
 
 const setPendingSync = (pending) => {
   state.hasPendingSync = pending;
@@ -695,7 +687,7 @@ const apiFetch = async (path, options = {}) => {
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const elapsed = Date.now() - state.lastRequestAtMs;
-      const waitMs = Math.max(0, state.apiMinIntervalMs - elapsed);
+      const waitMs = Math.max(0, state.apiMinIntervalMs + 10 - elapsed);
       if (waitMs > 0) {
         await sleep(waitMs);
       }
@@ -704,13 +696,12 @@ const apiFetch = async (path, options = {}) => {
       headers.set("accept-language", state.lang);
       headers.set("x-api-key", state.apiKey || "");
 
+      state.lastRequestAtMs = Date.now();
       const response = await fetch(buildUrl(path), {
         ...options,
         headers,
         cache: "no-store",
       });
-
-      state.lastRequestAtMs = Date.now();
 
       if (response.status === 401) {
         let payload = null;
@@ -727,7 +718,7 @@ const apiFetch = async (path, options = {}) => {
       }
 
       if (response.status === 429 && attempt < 2) {
-        await sleep(1100);
+        await sleep(state.apiMinIntervalMs + 10);
         continue;
       }
 
@@ -1197,6 +1188,10 @@ const renderRaw = (payload) => {
 const loadDashboard = async () => {
   const params = new URLSearchParams();
   params.set("historyHours", String(state.historyHours));
+  params.set("limit", String(state.limit));
+  params.set("offset", String(state.offset));
+  if (state.query.trim()) params.set("q", state.query.trim());
+  if (state.minDelay.trim()) params.set("minDelay", state.minDelay.trim());
 
   if (state.historyFrom) {
     params.set("historyFrom", state.historyFrom);
@@ -1219,7 +1214,8 @@ const loadDashboard = async () => {
   renderProducts(data.byProduct);
   renderCorridors(data.topCorridors);
   renderToday(data.today);
-  renderHistorical(data.historical);
+  if (data.historical) renderHistorical(data.historical);
+  if (data.trains) renderTrains(data.trains);
 
   lastSeenEl.textContent = data.overview.lastSeenAtIso
     ? `${t("lastSignal")}: ${new Date(data.overview.lastSeenAtIso).toLocaleString(locale(), {
@@ -1261,18 +1257,20 @@ const loadTrains = async () => {
   renderTrains(data);
 };
 
+let rawLoading = false;
 const loadRawLive = async () => {
-  if (!state.isRawOpen) {
+  if (!state.isRawOpen || rawLoading) {
     return;
   }
 
   try {
+    rawLoading = true;
     const response = await apiFetch("/api/raw/live");
     const data = await readJsonResponse(response);
     renderRaw(data);
   } catch (error) {
     rawMetaEl.textContent = error instanceof Error ? error.message : String(error);
-  }
+  } finally { rawLoading = false; }
 };
 
 const checkForPendingSync = async () => {
@@ -1288,46 +1286,49 @@ const checkForPendingSync = async () => {
     const incomingSuccessAt = Number(data?.ingestor?.lastSuccessAt || 0);
     if (incomingSuccessAt > state.lastAppliedSuccessAt) {
       setPendingSync(true);
-      setStatus(t("syncAvailable"), "ok");
+      await refresh();
     }
   } catch {
     // noop: non-blocking polling
   }
 };
 
-const refresh = async () => {
-  try {
-    await loadDashboard();
-    await loadTrains();
-    if (state.isRawOpen) {
-      await loadRawLive();
-    }
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), "error");
+let refreshPromise = null;
+let refreshAgain = false;
+const refresh = () => {
+  if (refreshPromise) {
+    refreshAgain = true;
+    return refreshPromise;
   }
+  refreshPromise = (async () => {
+    do {
+      refreshAgain = false;
+      await loadDashboard();
+    } while (refreshAgain);
+  })().catch((error) => {
+    setStatus(error instanceof Error ? error.message : String(error), "error");
+  }).finally(() => { refreshPromise = null; });
+  return refreshPromise;
 };
 
-const refreshFirstPaint = async () => {
-  try {
-    await loadDashboard();
-    setTimeout(() => {
-      void loadTrains().catch((error) => {
-        setStatus(error instanceof Error ? error.message : String(error), "error");
-      });
-    }, 0);
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), "error");
-  }
-};
-
+let eventsConnected = false;
 const autoRefreshTick = async () => {
-  if (isUserInactive()) {
-    await refresh();
-    return;
-  }
-
-  await checkForPendingSync();
+  if (!document.hidden && !eventsConnected) await checkForPendingSync();
 };
+
+const events = new EventSource(buildUrl("/api/events"));
+events.onopen = () => { eventsConnected = true; if (latestDashboard && !document.hidden) void refresh(); };
+events.onerror = () => { eventsConnected = false; };
+events.onmessage = (event) => {
+  const update = JSON.parse(event.data);
+  if (!document.hidden && latestDashboard &&
+      (Number(update.lastSuccessAt) > state.lastAppliedSuccessAt || update.kind === "history")) {
+    void refresh();
+  }
+};
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void checkForPendingSync();
+});
 
 const stopRawPolling = () => {
   if (state.rawTimer) {
@@ -1422,7 +1423,6 @@ const downloadFile = (filename, mimeType, content) => {
 
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  markUserActivity();
 
   state.query = searchInput.value;
   state.minDelay = minDelayInput.value;
@@ -1432,7 +1432,6 @@ filtersForm.addEventListener("submit", (event) => {
 });
 
 langSwitchEl.addEventListener("change", () => {
-  markUserActivity();
   state.lang = langSwitchEl.value === "en" ? "en" : "es";
   localStorage.setItem("retrasometro_lang", state.lang);
   localStorage.removeItem("renfe_lang");
@@ -1442,7 +1441,6 @@ langSwitchEl.addEventListener("change", () => {
 
 for (const button of historyButtons) {
   button.addEventListener("click", () => {
-    markUserActivity();
     const hours = Number(button.dataset.hours);
     if (!Number.isFinite(hours) || hours < 1) {
       return;
@@ -1465,7 +1463,6 @@ for (const button of historyButtons) {
 }
 
 historyRangeApplyBtnEl.addEventListener("click", () => {
-  markUserActivity();
   state.historyFrom = historyFromInputEl.value || "";
   state.historyTo = historyToInputEl.value || "";
   localStorage.setItem("retrasometro_history_from", state.historyFrom);
@@ -1478,7 +1475,6 @@ historyRangeApplyBtnEl.addEventListener("click", () => {
 });
 
 historyRangeClearBtnEl.addEventListener("click", () => {
-  markUserActivity();
   state.historyFrom = "";
   state.historyTo = "";
   localStorage.removeItem("retrasometro_history_from");
@@ -1493,7 +1489,6 @@ historyRangeClearBtnEl.addEventListener("click", () => {
 });
 
 apiDocsBtnEl.addEventListener("click", () => {
-  markUserActivity();
   const docsUrl = buildUrl("/api-docs.html");
   const opened = window.open(docsUrl, "_blank", "noopener,noreferrer");
   if (!opened) {
@@ -1503,20 +1498,17 @@ apiDocsBtnEl.addEventListener("click", () => {
 
 if (rawToggleBtnEl) {
   rawToggleBtnEl.addEventListener("click", () => {
-    markUserActivity();
     toggleRawPanel();
   });
 }
 
 closeRawBtnEl.addEventListener("click", () => {
-  markUserActivity();
   if (state.isRawOpen) {
     toggleRawPanel();
   }
 });
 
 copyRawBtnEl.addEventListener("click", async () => {
-  markUserActivity();
   try {
     await navigator.clipboard.writeText(buildUrl("/api/raw/live"));
     setStatus(t("rawCopyOk"), "ok");
@@ -1526,7 +1518,6 @@ copyRawBtnEl.addEventListener("click", async () => {
 });
 
 recoverHistoryBtnEl.addEventListener("click", async () => {
-  markUserActivity();
   try {
     const response = await apiFetch("/api/history/recover?hours=48", { method: "POST" });
     const data = await readJsonResponse(response);
@@ -1540,14 +1531,12 @@ recoverHistoryBtnEl.addEventListener("click", async () => {
 
 if (syncBtnEl) {
   syncBtnEl.addEventListener("click", async () => {
-    markUserActivity();
     await refresh();
   });
 }
 
 for (const button of sortButtons) {
   button.addEventListener("click", () => {
-    markUserActivity();
     const field = button.dataset.sort;
     if (!field) {
       return;
@@ -1565,15 +1554,9 @@ for (const button of sortButtons) {
   });
 }
 
-searchInput.addEventListener("input", markUserActivity);
-minDelayInput.addEventListener("input", markUserActivity);
-if (themeSwitchEl) {
-  themeSwitchEl.addEventListener("change", markUserActivity);
-}
 
 if (corridorsSearchInputEl) {
   corridorsSearchInputEl.addEventListener("input", () => {
-    markUserActivity();
     state.corridorsQuery = corridorsSearchInputEl.value || "";
     rerenderLocalFilteredPanels();
   });
@@ -1581,7 +1564,6 @@ if (corridorsSearchInputEl) {
 
 if (historicalProductsSearchInputEl) {
   historicalProductsSearchInputEl.addEventListener("input", () => {
-    markUserActivity();
     state.historicalProductsQuery = historicalProductsSearchInputEl.value || "";
     rerenderLocalFilteredPanels();
   });
@@ -1589,7 +1571,6 @@ if (historicalProductsSearchInputEl) {
 
 if (accountabilityRoutesSearchInputEl) {
   accountabilityRoutesSearchInputEl.addEventListener("input", () => {
-    markUserActivity();
     state.accountabilityRoutesQuery = accountabilityRoutesSearchInputEl.value || "";
     rerenderLocalFilteredPanels();
   });
@@ -1597,7 +1578,6 @@ if (accountabilityRoutesSearchInputEl) {
 
 if (accountabilityTrainsSearchInputEl) {
   accountabilityTrainsSearchInputEl.addEventListener("input", () => {
-    markUserActivity();
     state.accountabilityTrainsQuery = accountabilityTrainsSearchInputEl.value || "";
     rerenderLocalFilteredPanels();
   });
@@ -1605,7 +1585,6 @@ if (accountabilityTrainsSearchInputEl) {
 
 if (exportCsvBtnEl) {
   exportCsvBtnEl.addEventListener("click", async () => {
-    markUserActivity();
     try {
       const rows = toExportRows(await fetchAllFilteredTrains());
       const header = [t("thTrain"), t("thType"), t("thCorridor"), t("thRoute"), t("thNext"), t("thDelay"), t("thLast")];
@@ -1631,7 +1610,6 @@ if (exportCsvBtnEl) {
 
 if (exportExcelBtnEl) {
   exportExcelBtnEl.addEventListener("click", async () => {
-    markUserActivity();
     try {
       const rows = toExportRows(await fetchAllFilteredTrains());
       const htmlRows = rows
@@ -1705,15 +1683,11 @@ const boot = async () => {
   setStatus(t("statusLoading"));
 
   try {
-    await refreshFirstPaint();
+    await refresh();
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), "error");
   }
 
-  const activityEvents = ["pointerdown", "keydown", "mousemove", "touchstart", "scroll"];
-  for (const eventName of activityEvents) {
-    window.addEventListener(eventName, markUserActivity, { passive: true });
-  }
 
   setInterval(() => {
     void autoRefreshTick();

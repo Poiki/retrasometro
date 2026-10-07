@@ -2,44 +2,42 @@ import { config } from "./config";
 import { DB } from "./db";
 import { RenfeIngestor } from "./ingestor";
 import { DashboardPresetCache } from "./dashboard-cache";
-import { OPS_PRESET_HOURS, OpsPresetCache } from "./ops-cache";
+import { OpsPresetCache } from "./ops-cache";
 import { startServer } from "./server";
+import type { RunAnalytics } from "./analytics-worker";
 
 const db = new DB(config.dbPath);
-const dashboardPresetCache = new DashboardPresetCache(db);
-const opsPresetCache = new OpsPresetCache(db);
-const ingestor = new RenfeIngestor(db, async (currentEpoch) => {
-  const opsProgress = db.runOpsMaterializationTick();
-  const hasOpsChanges = opsProgress.processedArchiveRows > 0 || opsProgress.processedLiveRows > 0;
-  if (opsProgress.processedArchiveRows > 0 || opsProgress.processedLiveRows > 0) {
-    console.log(
-      `[ops-materialize] status=${opsProgress.status} archive_rows=${opsProgress.processedArchiveRows} live_rows=${opsProgress.processedLiveRows}`,
-    );
+const worker = new Worker(new URL("./analytics-worker.ts", import.meta.url).href, { env: { ...process.env } as Record<string, string> });
+const events = new EventTarget();
+let sequence = 0;
+const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+const runAnalytics: RunAnalytics = (method, ...args) => new Promise((resolve, reject) => {
+  const id = ++sequence;
+  pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+  worker.postMessage({ id, method, args });
+});
+worker.onmessage = (event: MessageEvent<{ id?: number; result?: unknown; error?: string; type?: string }>) => {
+  if (event.data.type === "ready") { events.dispatchEvent(new Event("history")); return; }
+  const job = pending.get(event.data.id!);
+  if (job) {
+    pending.delete(event.data.id!);
+    if (event.data.error) job.reject(new Error(event.data.error));
+    else job.resolve(event.data.result);
   }
-  await dashboardPresetCache.refreshDue(currentEpoch);
-  if (hasOpsChanges) {
-    for (const hours of OPS_PRESET_HOURS) {
-      await opsPresetCache.generate(hours);
-    }
-  } else {
-    await opsPresetCache.refreshDue(currentEpoch);
-  }
+};
+worker.onerror = (error) => {
+  console.error(`[analytics] ${error.message}`);
+  for (const job of pending.values()) job.reject(new Error(error.message));
+  process.exit(1);
+};
+const dashboardPresetCache = new DashboardPresetCache(db, (hours) => runAnalytics("dashboard", hours));
+const opsPresetCache = new OpsPresetCache(db, (hours) => runAnalytics("ops", hours));
+const ingestor = new RenfeIngestor(db, () => {
+  events.dispatchEvent(new Event("update"));
+  worker.postMessage({ method: "refresh", args: [] });
 });
 
-void Promise.resolve().then(async () => {
-  const opsProgress = db.runOpsMaterializationTick();
-  if (opsProgress.processedArchiveRows > 0 || opsProgress.processedLiveRows > 0) {
-    console.log(
-      `[ops-materialize] startup status=${opsProgress.status} archive_rows=${opsProgress.processedArchiveRows} live_rows=${opsProgress.processedLiveRows}`,
-    );
-  }
-  await dashboardPresetCache.refreshDue();
-  for (const hours of OPS_PRESET_HOURS) {
-    await opsPresetCache.generate(hours);
-  }
-});
-
-const server = startServer(db, ingestor, dashboardPresetCache, opsPresetCache);
+const server = startServer(db, ingestor, dashboardPresetCache, opsPresetCache, runAnalytics, events);
 void ingestor.start().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[startup] ingestor init error ${message}`);
@@ -49,6 +47,7 @@ const shutdown = () => {
   console.log("[shutdown] stopping server");
   ingestor.stop();
   server.stop();
+  worker.terminate();
   db.close();
   process.exit(0);
 };

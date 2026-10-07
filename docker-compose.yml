@@ -14,18 +14,19 @@ services:
       POLL_INTERVAL_MS: 60000
       FETCH_TIMEOUT_MS: 12000
       STALE_TRAIN_SECONDS: 180
-      SNAPSHOT_RETENTION_HOURS: 96
+      SNAPSHOT_RETENTION_HOURS: 0
+      INGESTION_RUN_RETENTION_DAYS: 0
       SNAPSHOT_HEARTBEAT_SECONDS: 300
       COMPACT_EVERY_RUNS: 15
       STATIONS_REFRESH_HOURS: 24
       API_KEY_TTL_SECONDS: 900
       API_RATE_LIMIT_MS: 1000
       RAW_MAX_TRAINS: 5000
-      OBSERVATION_RETENTION_DAYS: 14
-      HOURLY_RETENTION_DAYS: 400
+      OBSERVATION_RETENTION_DAYS: 0
+      HOURLY_RETENTION_DAYS: 0
       DAILY_RETENTION_DAYS: 0
-      BATCH_RETENTION_DAYS: 14
-      ARCHIVE_ENABLED: 1
+      BATCH_RETENTION_DAYS: 0
+      ARCHIVE_ENABLED: 0
       ARCHIVE_DIR: /app/data/archive/observations
       ARCHIVE_ZSTD_LEVEL: 3
       WAL_CHECKPOINT_TRUNCATE_BYTES: 67108864
@@ -33,7 +34,7 @@ services:
       HTTP_COMPRESSION_MIN_BYTES: 1024
       HTTP_GZIP_LEVEL: 5
       HTTP_BROTLI_LEVEL: 4
-      HISTORY_RETENTION_DAYS: 14
+      HISTORY_RETENTION_DAYS: 0
       RECOVERY_LOOKBACK_HOURS: 72
       RENFE_ENDPOINTS: https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json
       STATIONS_ENDPOINT: https://tiempo-real.largorecorrido.renfe.com/data/estaciones.geojson
@@ -41,7 +42,7 @@ services:
       CACHE_FILE: /app/data/cache/flotaLD.latest.json
       BOOTSTRAP_SQLITE_PATH: /seed-data/renfe.db
       BOOTSTRAP_CACHE_PATH: /seed-data/cache/flotaLD.latest.json
-      AUTO_MIGRATE_PG_ON_START: 1
+      AUTO_MIGRATE_PG_ON_START: 0
       POSTGRES_URL: postgresql://renfe:renfe@postgres:5432/renfe_analytics
       MIGRATION_BATCH_SIZE: 500
     volumes:

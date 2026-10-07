@@ -8,6 +8,7 @@ import { OpsPresetCache } from "./ops-cache";
 import { ApiKeyManager } from "./auth";
 import { getProductName, getProductNames, type AppLanguage } from "./products";
 import { resolveLanguage, t } from "./i18n";
+import type { RunAnalytics } from "./analytics-worker";
 
 const publicRoot = join(import.meta.dir, "..", "public");
 
@@ -52,6 +53,7 @@ const pickCompressionEncoding = (acceptEncoding: string | null): "br" | "gzip" |
 };
 
 const maybeCompressResponse = async (request: Request, response: Response): Promise<Response> => {
+  if (response.headers.get("content-type")?.startsWith("text/event-stream")) return response;
   if (!config.httpCompressionEnabled || request.method === "HEAD") {
     return response;
   }
@@ -244,13 +246,39 @@ export const startServer = (
   ingestor: RenfeIngestor,
   dashboardPresetCache: DashboardPresetCache,
   opsPresetCache: OpsPresetCache,
+  runAnalytics: RunAnalytics,
+  events: EventTarget,
 ) => {
   const apiKeyManager = new ApiKeyManager();
 
   const server = Bun.serve({
     port: config.port,
-    async fetch(request) {
+    async fetch(request, server) {
       const url = new URL(request.url);
+      if (url.pathname === "/api/events") {
+        server.timeout(request, 0);
+        let cleanup = () => {};
+        const stream = new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            const send = (event: Event) => controller.enqueue(encoder.encode(`data: ${JSON.stringify({ lastSuccessAt: ingestor.getStatus().lastSuccessAt, kind: event.type })}\n\n`));
+            const heartbeat = setInterval(() => controller.enqueue(encoder.encode(": keepalive\n\n")), 20000);
+            cleanup = () => {
+              clearInterval(heartbeat);
+              events.removeEventListener("update", send);
+              events.removeEventListener("history", send);
+              request.signal.removeEventListener("abort", abort);
+            };
+            const abort = () => { cleanup(); controller.close(); };
+            request.signal.addEventListener("abort", abort, { once: true });
+            events.addEventListener("update", send);
+            events.addEventListener("history", send);
+            send(new Event("update"));
+          },
+          cancel() { cleanup(); },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "x-accel-buffering": "no" } });
+      }
       const response = url.pathname.startsWith("/api/")
         ? await handleApi(
             request,
@@ -260,6 +288,7 @@ export const startServer = (
             dashboardPresetCache,
             opsPresetCache,
             apiKeyManager,
+            runAnalytics,
           )
         : await serveStatic(url.pathname);
 
@@ -279,6 +308,7 @@ const handleApi = async (
   dashboardPresetCache: DashboardPresetCache,
   opsPresetCache: OpsPresetCache,
   apiKeyManager: ApiKeyManager,
+  runAnalytics: RunAnalytics,
 ): Promise<Response> => {
   const lang = resolveLanguage(url, request);
 
@@ -305,12 +335,12 @@ const handleApi = async (
     const sampleOverview = db.getOverview();
     const sampleDelayBuckets = db.getDelayBuckets();
     const sampleToday = db.getTodayAggregate();
-    const sampleHistory = db.getHistoricalStats(24);
+    const sampleHistory = (await dashboardPresetCache.read(24))?.historical ?? await runAnalytics("getHistoricalStats", 24);
     const sampleTopCorridors = db.getTopCorridors(3);
-    const sampleCorridorMeta = db.getCorridorMeta();
-    const sampleCoverage = db.getHistoryCoverage(48, Math.floor(config.pollingIntervalMs / 1000));
-    const sampleStorage = db.getObservationArchiveStorage();
-    const sampleOps = db.getOpsMetrics(24);
+    const sampleCorridorMeta = (await dashboardPresetCache.read(24))?.corridorMeta ?? await runAnalytics("getCorridorMeta");
+    const sampleCoverage = await runAnalytics("getHistoryCoverage", 48, Math.floor(config.pollingIntervalMs / 1000));
+    const sampleStorage = await runAnalytics("getObservationArchiveStorage");
+    const sampleOps = await opsPresetCache.read(24) ?? await opsPresetCache.generate(24);
     const sampleTrains = withProductLabels(
       db.listTrains({
         query: null,
@@ -479,8 +509,8 @@ const handleApi = async (
             title: lang === "es" ? "Respeta los límites" : "Respect limits",
             detail:
               lang === "es"
-                ? "Máximo 1 petición a la vez y 1 por segundo por clave."
-                : "Maximum 1 in-flight request and 1 request/sec per key.",
+                ? `Máximo 1 petición a la vez e intervalo mínimo de ${config.apiRateLimitMs} ms por clave.`
+                : `Maximum 1 in-flight request and a ${config.apiRateLimitMs} ms minimum interval per key.`,
           },
         ],
         endpoints: [
@@ -810,6 +840,7 @@ const handleApi = async (
         dashboardPresetCache,
         opsPresetCache,
         lang,
+        runAnalytics,
       );
     } finally {
       lock.release();
@@ -827,6 +858,7 @@ const handleProtectedApi = async (
   dashboardPresetCache: DashboardPresetCache,
   opsPresetCache: OpsPresetCache,
   lang: AppLanguage,
+  runAnalytics: RunAnalytics,
 ): Promise<Response> => {
   if (url.pathname === "/api/dashboard") {
     const historyHours = Math.min(
@@ -855,9 +887,63 @@ const handleProtectedApi = async (
       };
     });
 
-    let topCorridors = db.getTopCorridors(8);
-    let corridorMeta = db.getCorridorMeta();
+    const topCorridors = db.getTopCorridors(8);
+    let corridorMeta = (await dashboardPresetCache.read(24))?.corridorMeta ?? null;
     const typeInsights = db.getTodayTypeInsights();
+    const topDelayed = db.listTrains({ query: null, minDelay: null, limit: 12, offset: 0 });
+    const livePayload = {
+      ok: true,
+      language: lang,
+      generatedAt: new Date().toISOString(),
+      overview: {
+        ...overview,
+        lastSeenAtIso: toIso(overview.lastSeenAt),
+        accessiblePct:
+          overview.activeTrains > 0
+            ? Number(((overview.accessibleCount / overview.activeTrains) * 100).toFixed(1))
+            : 0,
+      },
+      today: db.getTodayAggregate(),
+      typeInsights: {
+        problematic: typeInsights.problematic
+          ? {
+              ...typeInsights.problematic,
+              productName: getProductName(typeInsights.problematic.codProduct, lang),
+              productNameEs: getProductName(typeInsights.problematic.codProduct, "es"),
+              productNameEn: getProductName(typeInsights.problematic.codProduct, "en"),
+            }
+          : null,
+        volume: typeInsights.volume
+          ? {
+              ...typeInsights.volume,
+              productName: getProductName(typeInsights.volume.codProduct, lang),
+              productNameEs: getProductName(typeInsights.volume.codProduct, "es"),
+              productNameEn: getProductName(typeInsights.volume.codProduct, "en"),
+            }
+          : null,
+      },
+      delayBuckets,
+      byProduct,
+      topCorridors,
+      topDelayed: withProductLabels(topDelayed as Array<{ cod_product: number }>, lang),
+      trains: {
+        total: db.countTrains(url.searchParams.get("q"), parseIntOrNull(url.searchParams.get("minDelay"))),
+        limit: Math.min(Math.max(parseIntOrNull(url.searchParams.get("limit")) ?? 120, 1), 200),
+        offset: Math.max(parseIntOrNull(url.searchParams.get("offset")) ?? 0, 0),
+        items: withProductLabels(db.listTrains({
+          query: url.searchParams.get("q"),
+          minDelay: parseIntOrNull(url.searchParams.get("minDelay")),
+          limit: Math.min(Math.max(parseIntOrNull(url.searchParams.get("limit")) ?? 120, 1), 200),
+          offset: Math.max(parseIntOrNull(url.searchParams.get("offset")) ?? 0, 0),
+        }) as Array<{ cod_product: number }>, lang),
+      },
+      recentRuns: db.getRecentRuns(12),
+      ingestor: ingestor.getStatus(),
+      api: {
+        docs: "/api/docs",
+        raw: "/api/raw/live",
+      },
+    };
     let historicalRaw;
     let cacheMeta: {
       source: "cache" | "live";
@@ -883,7 +969,7 @@ const handleProtectedApi = async (
         }
       }
 
-      historicalRaw = db.getHistoricalStatsCustom(safeSince, safeUntil, {
+      historicalRaw = await runAnalytics("getHistoricalStatsCustom", safeSince, safeUntil, {
         preferAggregated: historyPrecisionMode !== "raw_detail",
       });
       cacheMeta = {
@@ -900,8 +986,7 @@ const handleProtectedApi = async (
       );
       if (cached && cachedHasAccountability) {
         historicalRaw = cached.historical;
-        topCorridors = Array.isArray(cached.topCorridors) ? cached.topCorridors : db.getTopCorridors(8);
-        corridorMeta = cached.corridorMeta ?? db.getCorridorMeta();
+        corridorMeta = cached.corridorMeta ?? corridorMeta;
         if (rawWindowStart !== null && historyHours * 3600 > rawWindowSeconds) {
           historyPrecisionMode = "aggregated_only";
         }
@@ -913,23 +998,11 @@ const handleProtectedApi = async (
           customRange: false,
         };
       } else {
-        const regenerated = await dashboardPresetCache.generate(historyHours, nowEpoch);
-        historicalRaw = regenerated.historical;
-        topCorridors = regenerated.topCorridors ?? db.getTopCorridors(8);
-        corridorMeta = regenerated.corridorMeta ?? db.getCorridorMeta();
-        if (rawWindowStart !== null && historyHours * 3600 > rawWindowSeconds) {
-          historyPrecisionMode = "aggregated_only";
-        }
-        cacheMeta = {
-          source: "live",
-          windowHours: historyHours,
-          generatedAt: new Date(nowEpoch * 1000).toISOString(),
-          ageSeconds: 0,
-          customRange: false,
-        };
+        void dashboardPresetCache.generate(historyHours, nowEpoch).catch((error) => console.error("[display-cache]", error));
+        return json({ ...livePayload, historical: null, historicalPending: true, corridorMeta });
       }
     } else {
-      historicalRaw = db.getHistoricalStats(historyHours);
+      historicalRaw = await runAnalytics("getHistoricalStats", historyHours);
       if (rawWindowStart !== null && historyHours * 3600 > rawWindowSeconds) {
         historyPrecisionMode = "aggregated_only";
       }
@@ -998,51 +1071,15 @@ const handleProtectedApi = async (
         : [],
       repeatOffenders: accountabilityRepeatOffenders,
     };
-    const topDelayed = db.listTrains({
-      query: null,
-      minDelay: null,
-      limit: 12,
-      offset: 0,
-    });
-
     return json({
-      ok: true,
-      language: lang,
-      generatedAt: new Date().toISOString(),
+      ...livePayload,
       cacheMeta,
       historyPrecision: {
         mode: historyPrecisionMode,
         rawWindowDays,
-        archivesAvailable: config.archiveEnabled,
+        archivesAvailable: true,
       },
       corridorMeta,
-      overview: {
-        ...overview,
-        lastSeenAtIso: toIso(overview.lastSeenAt),
-        accessiblePct:
-          overview.activeTrains > 0
-            ? Number(((overview.accessibleCount / overview.activeTrains) * 100).toFixed(1))
-            : 0,
-      },
-      today: db.getTodayAggregate(),
-      typeInsights: {
-        problematic: typeInsights.problematic
-          ? {
-              ...typeInsights.problematic,
-              productName: getProductName(typeInsights.problematic.codProduct, lang),
-              productNameEs: getProductName(typeInsights.problematic.codProduct, "es"),
-              productNameEn: getProductName(typeInsights.problematic.codProduct, "en"),
-            }
-          : null,
-        volume: typeInsights.volume
-          ? {
-              ...typeInsights.volume,
-              productName: getProductName(typeInsights.volume.codProduct, lang),
-              productNameEs: getProductName(typeInsights.volume.codProduct, "es"),
-              productNameEn: getProductName(typeInsights.volume.codProduct, "en"),
-            }
-          : null,
-      },
       historical: {
         hours: historicalRaw.hours,
         sinceEpoch: historicalRaw.sinceEpoch,
@@ -1064,16 +1101,6 @@ const handleProtectedApi = async (
         dailyTrend: historicalRaw.dailyTrend,
         ingestion: historicalRaw.ingestion,
       },
-      delayBuckets,
-      byProduct,
-      topCorridors,
-      topDelayed: withProductLabels(topDelayed as Array<{ cod_product: number }>, lang),
-      recentRuns: db.getRecentRuns(12),
-      ingestor: ingestor.getStatus(),
-      api: {
-        docs: "/api/docs",
-        raw: "/api/raw/live",
-      },
     });
   }
 
@@ -1081,39 +1108,19 @@ const handleProtectedApi = async (
     const windowRaw = parseIntOrNull(url.searchParams.get("window")) ?? 168;
     const windowHours = [24, 168, 720].includes(windowRaw) ? windowRaw : 168;
     const nowEpoch = Math.floor(Date.now() / 1000);
-    let payload = db.getOpsMetrics(windowHours);
-    let cacheMeta: {
+    const cached = await opsPresetCache.read(windowHours as 24 | 168 | 720);
+    const payload = cached ?? await opsPresetCache.generate(windowHours as 24 | 168 | 720);
+    const cacheMeta: {
       source: "cache" | "live";
       windowHours: number;
       generatedAt: string;
       ageSeconds: number;
     } = {
-      source: "live",
+      source: cached ? "cache" : "live",
       windowHours,
       generatedAt: payload.generatedAt,
-      ageSeconds: 0,
+      ageSeconds: Math.max(0, nowEpoch - payload.generatedAtEpoch),
     };
-
-    if (opsPresetCache.isPresetHours(windowHours)) {
-      const cached = await opsPresetCache.read(windowHours);
-      if (cached) {
-        payload = cached;
-        cacheMeta = {
-          source: "cache",
-          windowHours,
-          generatedAt: cached.generatedAt,
-          ageSeconds: Math.max(0, nowEpoch - cached.generatedAtEpoch),
-        };
-      } else {
-        payload = await opsPresetCache.generate(windowHours);
-        cacheMeta = {
-          source: "live",
-          windowHours,
-          generatedAt: payload.generatedAt,
-          ageSeconds: 0,
-        };
-      }
-    }
 
     const localizeOpsRank = (item: {
       key: string;
@@ -1197,7 +1204,7 @@ const handleProtectedApi = async (
     }
 
     const hours = Math.min(Math.max(parseIntOrNull(url.searchParams.get("hours")) ?? 24, 1), 168);
-    const history = db.getTrainHistory(codComercial, hours);
+    const history = await runAnalytics("getTrainHistory", codComercial, hours);
 
     return json({
       ok: true,
@@ -1230,7 +1237,7 @@ const handleProtectedApi = async (
       offset: 0,
     });
 
-    const storage = db.getObservationArchiveStorage();
+    const storage = await runAnalytics("getObservationArchiveStorage");
 
     return json({
       ok: true,
@@ -1249,7 +1256,7 @@ const handleProtectedApi = async (
       overview: db.getOverview(),
       delayBuckets: db.getDelayBuckets(),
       today: db.getTodayAggregate(),
-      historyCoverage: db.getHistoryCoverage(48, Math.floor(config.pollingIntervalMs / 1000)),
+      historyCoverage: await runAnalytics("getHistoryCoverage", 48, Math.floor(config.pollingIntervalMs / 1000)),
       storage,
       recentRuns: db.getRecentRuns(30),
       trainsCurrent: withProductLabels(trains as Array<{ cod_product: number }>, lang),
@@ -1263,8 +1270,8 @@ const handleProtectedApi = async (
     return json({
       ok: true,
       language: lang,
-      report: db.getHistoryCoverage(hours, Math.floor(config.pollingIntervalMs / 1000)),
-      storage: db.getObservationArchiveStorage(),
+      report: await runAnalytics("getHistoryCoverage", hours, Math.floor(config.pollingIntervalMs / 1000)),
+      storage: await runAnalytics("getObservationArchiveStorage"),
     });
   }
 
@@ -1286,8 +1293,8 @@ const handleProtectedApi = async (
 
     const hours = Math.min(Math.max(parseIntOrNull(url.searchParams.get("hours")) ?? 48, 1), 720);
     const sinceEpoch = Math.floor(Date.now() / 1000) - hours * 3600;
-    const recovered = db.recoverObservationsFromSnapshots(sinceEpoch);
-    const report = db.getHistoryCoverage(hours, Math.floor(config.pollingIntervalMs / 1000));
+    const recovered = await runAnalytics("recoverObservationsFromSnapshots", sinceEpoch);
+    const report = await runAnalytics("getHistoryCoverage", hours, Math.floor(config.pollingIntervalMs / 1000));
 
     return json({
       ok: true,
@@ -1328,7 +1335,7 @@ const serveStatic = async (pathname: string): Promise<Response> => {
   if (await file.exists()) {
     const extension = extname(absolutePath).toLowerCase();
     const cacheControl =
-      extension === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
+      [".html", ".js", ".css"].includes(extension) ? "no-cache" : "public, max-age=31536000, immutable";
 
     return new Response(file, {
       headers: {

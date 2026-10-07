@@ -6,8 +6,6 @@ export interface ApiKeyRecord {
   expiresAt: number;
   inFlight: boolean;
   lastStartedAt: number;
-  lastCompletedAt: number;
-  totalRequests: number;
 }
 
 type AcquireFailure = "missing" | "invalid" | "expired" | "in_flight" | "rate_limited";
@@ -30,8 +28,6 @@ export class ApiKeyManager {
       expiresAt: now + config.apiKeyTtlSeconds * 1000,
       inFlight: false,
       lastStartedAt: 0,
-      lastCompletedAt: 0,
-      totalRequests: 0,
     };
 
     this.store.set(key, record);
@@ -92,14 +88,12 @@ export class ApiKeyManager {
 
     record.inFlight = true;
     record.lastStartedAt = now;
-    record.totalRequests += 1;
 
     return {
       ok: true,
       record,
       release: () => {
         record.inFlight = false;
-        record.lastCompletedAt = this.nowMs();
       },
     };
   }

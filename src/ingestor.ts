@@ -54,10 +54,8 @@ export class RenfeIngestor {
   }
 
   async start() {
-    await this.refreshStations();
+    void this.refreshStations();
     void this.runOnce();
-    void this.recoverHistoricalData();
-    void this.bootstrapHourlyAggregates();
 
     this.runTimer = setInterval(() => {
       void this.runOnce();
@@ -172,71 +170,72 @@ export class RenfeIngestor {
       const normalized = [...trainMap.values()];
       const day = getDayString(nowEpoch);
       const payloadHash = Bun.hash(JSON.stringify(payload)).toString();
-      const batchId = this.db.createIngestionBatch({
-        fetchedAt: nowEpoch,
-        source,
-        providerUpdatedAt,
-        trainCount: normalized.length,
-        payloadHash,
-      });
-
-      let snapshotCount = 0;
-      const observationItems: Array<{ train: NormalizedTrain; hash: string }> = [];
-
-      for (const train of normalized) {
-        const existing = this.db.getCurrentTrain(train.codComercial);
-        const hash = computeSnapshotHash(train);
-        const shouldSnapshot = this.shouldSnapshot(existing, hash, nowEpoch);
-        const snapshotAt = shouldSnapshot ? nowEpoch : null;
-        observationItems.push({ train, hash });
-
-        this.db.upsertCurrentTrain({
-          train,
-          nowEpoch,
-          hash,
-          snapshotAt,
+      const snapshotCount = this.db.transaction(() => {
+        const batchId = this.db.createIngestionBatch({
+          fetchedAt: nowEpoch,
+          source,
+          providerUpdatedAt,
+          trainCount: normalized.length,
+          payloadHash,
         });
 
-        if (shouldSnapshot) {
-          this.db.insertSnapshot(train, nowEpoch, hash);
-          snapshotCount += 1;
+        let snapshotCount = 0;
+        const observationItems: Array<{ train: NormalizedTrain; hash: string }> = [];
+
+        for (const train of normalized) {
+          const existing = this.db.getCurrentTrain(train.codComercial);
+          const hash = computeSnapshotHash(train);
+          const shouldSnapshot = this.shouldSnapshot(existing, hash, nowEpoch);
+          const snapshotAt = shouldSnapshot ? nowEpoch : null;
+          observationItems.push({ train, hash });
+
+          this.db.upsertCurrentTrain({
+            train,
+            nowEpoch,
+            hash,
+            snapshotAt,
+          });
+
+          if (shouldSnapshot) {
+            this.db.insertSnapshot(train, nowEpoch, hash);
+            snapshotCount += 1;
+          }
+
+          const distanceKm = this.computeDistance(existing, train);
+
+          this.db.upsertDailyStats({
+            train,
+            day,
+            nowEpoch,
+            distanceKm,
+          });
+
+          this.db.upsertHourlyTrainStats(train, nowEpoch);
         }
 
-        const distanceKm = this.computeDistance(existing, train);
-
-        this.db.upsertDailyStats({
-          train,
-          day,
+        this.db.insertTrainObservations(
+          batchId,
           nowEpoch,
-          distanceKm,
+          observationItems,
+          isRepeatedProviderUpdate ? "live_repeated_provider_ts" : "live",
+          0,
+        );
+
+        this.db.recordIngestionRun({
+          fetchedAt: nowEpoch,
+          source,
+          success: 1,
+          trainCount: normalized.length,
+          skipped: isRepeatedProviderUpdate ? 1 : 0,
+          error: null,
+          providerUpdatedAt,
         });
 
-        this.db.upsertHourlyTrainStats(train, nowEpoch);
-      }
-
-      this.db.insertTrainObservations(
-        batchId,
-        nowEpoch,
-        observationItems,
-        isRepeatedProviderUpdate ? "live_repeated_provider_ts" : "live",
-        0,
-      );
-
-      const removed = this.cleanup(nowEpoch);
-
-      this.db.recordIngestionRun({
-        fetchedAt: nowEpoch,
-        source,
-        success: 1,
-        trainCount: normalized.length,
-        skipped: isRepeatedProviderUpdate ? 1 : 0,
-        error: null,
-        providerUpdatedAt,
+        if (providerUpdatedAt) {
+          this.db.setState("last_provider_updated_at", providerUpdatedAt);
+        }
+        return snapshotCount;
       });
-
-      if (providerUpdatedAt) {
-        this.db.setState("last_provider_updated_at", providerUpdatedAt);
-      }
 
       this.status.lastSuccessAt = nowEpoch;
       this.status.lastError = null;
@@ -251,6 +250,13 @@ export class RenfeIngestor {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`[display-cache] error ${message}`);
         });
+      }
+
+      let removed = 0;
+      try {
+        removed = this.cleanup(nowEpoch);
+      } catch (error) {
+        console.error(`[compact] ${error instanceof Error ? error.message : String(error)}`);
       }
 
       console.log(
@@ -325,10 +331,10 @@ export class RenfeIngestor {
 
     if (this.runCounter > 0 && this.runCounter % config.compactEveryRuns === 0) {
       const snapshotsCutoff = nowEpoch - config.snapshotRetentionHours * 3600;
-      const runsCutoff = nowEpoch - 30 * 24 * 3600;
+      const runsCutoff = nowEpoch - config.ingestionRunRetentionDays * 24 * 3600;
 
-      const deletedSnapshots = this.db.cleanupSnapshots(snapshotsCutoff);
-      const deletedRuns = this.db.cleanupIngestionRuns(runsCutoff);
+      const deletedSnapshots = config.snapshotRetentionHours > 0 ? this.db.cleanupSnapshots(snapshotsCutoff) : 0;
+      const deletedRuns = config.ingestionRunRetentionDays > 0 ? this.db.cleanupIngestionRuns(runsCutoff) : 0;
       let archivedObservationRows = 0;
       let archivedObservationChunks = 0;
       let skippedArchiveChunks = 0;
@@ -358,7 +364,7 @@ export class RenfeIngestor {
             console.error(`[archive] fallo al archivar observaciones: ${message}`);
           }
         } else {
-          deletedObservations = this.db.cleanupObservations(historyCutoff);
+          console.warn("[archive] retención sin archivado: se conservan las observaciones");
         }
 
         if (config.archiveEnabled && archiveFailed) {
@@ -403,34 +409,6 @@ export class RenfeIngestor {
     }
 
     return removed;
-  }
-
-  private async recoverHistoricalData() {
-    await Promise.resolve();
-    const sinceEpoch = toEpochSeconds() - config.recoveryLookbackHours * 3600;
-    const recovered = this.db.recoverObservationsFromSnapshots(sinceEpoch);
-
-    if (recovered > 0) {
-      const refreshedHourly = this.db.bootstrapHourlyStatsFromObservations(sinceEpoch);
-      console.log(`[recovery] observaciones recuperadas desde snapshots=${recovered}`);
-      console.log(`[recovery] hourly refrescado=${refreshedHourly} desde=${sinceEpoch}`);
-    }
-  }
-
-  private async bootstrapHourlyAggregates() {
-    await Promise.resolve();
-
-    const stateKey = "hourly_bootstrap_last_30d_v2";
-    const alreadyBootstrapped = this.db.getState(stateKey);
-    if (alreadyBootstrapped) {
-      return;
-    }
-
-    console.log("[hourly-bootstrap] iniciando backfill de 30 dias");
-    const sinceEpoch = toEpochSeconds() - 30 * 24 * 3600;
-    const upserted = this.db.bootstrapHourlyStatsFromObservations(sinceEpoch);
-    this.db.setState(stateKey, String(toEpochSeconds()));
-    console.log(`[hourly-bootstrap] filas procesadas=${upserted} desde=${sinceEpoch}`);
   }
 
   async refreshStations() {
