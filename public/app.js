@@ -1,68 +1,66 @@
 import { initThemeController } from "./theme.js";
 
-const overviewCardsEl = document.querySelector("#overview-cards");
-const delayBucketsEl = document.querySelector("#delay-buckets");
-const productsEl = document.querySelector("#products");
-const corridorsEl = document.querySelector("#corridors");
-const todayMetricsEl = document.querySelector("#today-metrics");
-const trainsBodyEl = document.querySelector("#trains-body");
-const corridorsSearchInputEl = document.querySelector("#corridors-search");
-const historicalProductsSearchInputEl = document.querySelector("#historical-products-search");
-const accountabilityRoutesSearchInputEl = document.querySelector("#accountability-routes-search");
-const accountabilityTrainsSearchInputEl = document.querySelector("#accountability-trains-search");
-const statusPillEl = document.querySelector("#status-pill");
-const lastSeenEl = document.querySelector("#last-seen");
-const historicalCardsEl = document.querySelector("#historical-cards");
-const historicalHighlightsEl = document.querySelector("#historical-highlights");
-const historicalProductsEl = document.querySelector("#historical-products");
-const accountabilityRoutesEl = document.querySelector("#accountability-routes");
-const accountabilityTrainsEl = document.querySelector("#accountability-trains");
-const historyButtons = [...document.querySelectorAll(".history-btn")];
-const historyFromInputEl = document.querySelector("#history-from");
-const historyToInputEl = document.querySelector("#history-to");
-const historyRangeApplyBtnEl = document.querySelector("#history-range-apply");
-const historyRangeClearBtnEl = document.querySelector("#history-range-clear");
+const $ = (selector) => document.querySelector(selector);
 
-const filtersForm = document.querySelector("#filters");
-const searchInput = document.querySelector("#search");
-const minDelayInput = document.querySelector("#min-delay");
-const syncBtnEl = document.querySelector("#sync-btn");
-const exportCsvBtnEl = document.querySelector("#export-csv-btn");
-const exportExcelBtnEl = document.querySelector("#export-excel-btn");
+const overviewCardsEl = $("#overview-cards");
+const delayBucketsEl = $("#delay-buckets");
+const productsEl = $("#products");
+const corridorsEl = $("#corridors");
+const todayMetricsEl = $("#today-metrics");
+const trainsBodyEl = $("#trains-body");
+const corridorsSearchInputEl = $("#corridors-search");
+const historicalProductsSearchInputEl = $("#historical-products-search");
+const accountabilityRoutesSearchInputEl = $("#accountability-routes-search");
+const accountabilityTrainsSearchInputEl = $("#accountability-trains-search");
+const heroStatusEl = $("#hero-status");
+const statusPillEl = $("#status-pill");
+const liveTextEl = $("#live-text");
+const footerStatusTextEl = $("#footer-status-text");
+const lastSeenEl = $("#last-seen");
+const historicalCardsEl = $("#historical-cards");
+const historicalHighlightsEl = $("#historical-highlights");
+const historicalProductsEl = $("#historical-products");
+const accountabilityRoutesEl = $("#accountability-routes");
+const accountabilityTrainsEl = $("#accountability-trains");
+const trendChartEl = $("#trend-chart");
+const historyButtons = [...document.querySelectorAll(".history-btn")];
+const historyRangeEl = $("#history-range");
+const historyRangeToggleEl = $("#history-range-toggle");
+const historyRangeTextEl = $("#history-range-text");
+const historyFromInputEl = $("#history-from");
+const historyToInputEl = $("#history-to");
+const historyRangeApplyBtnEl = $("#history-range-apply");
+const historyRangeClearBtnEl = $("#history-range-clear");
+
+const filtersForm = $("#filters");
+const searchInput = $("#search");
+const minDelayInput = $("#min-delay");
+const syncBtnEl = $("#sync-btn");
+const exportCsvBtnEl = $("#export-csv-btn");
+const exportExcelBtnEl = $("#export-excel-btn");
 const sortButtons = [...document.querySelectorAll("[data-sort]")];
 
-const langSwitchEl = document.querySelector("#lang-switch");
-const themeSwitchEl = document.querySelector("#theme-switch");
-const themeOptionSystemEl = document.querySelector("#theme-option-system");
-const themeOptionLightEl = document.querySelector("#theme-option-light");
-const themeOptionDarkEl = document.querySelector("#theme-option-dark");
-const apiDocsBtnEl = document.querySelector("#api-docs-btn");
-const rawToggleBtnEl = document.querySelector("#raw-toggle-btn");
-const rawPanelEl = document.querySelector("#raw-panel");
-const rawTitleEl = document.querySelector("#raw-title");
-const rawMetaEl = document.querySelector("#raw-meta");
-const rawJsonEl = document.querySelector("#raw-json");
-const copyRawBtnEl = document.querySelector("#copy-raw-btn");
-const closeRawBtnEl = document.querySelector("#close-raw-btn");
-const recoverHistoryBtnEl = document.querySelector("#recover-history-btn");
+const langSwitchEl = $("#lang-switch");
+const themeSwitchEl = $("#theme-switch");
+const apiDocsBtnEl = $("#api-docs-btn");
 
 const I18N = {
   es: {
-    kicker: "retrasometro",
     title: "Retrasos ferroviarios en tiempo real",
-    subtitle: "",
+    subtitle: "Monitoriza la puntualidad de los trenes en toda la red ferroviaria de España",
+    navHome: "Inicio",
+    navTrains: "Trenes",
+    navStats: "Estadísticas",
+    navApi: "API",
+    navAbout: "Acerca de",
     langLabel: "Idioma",
     themeLabel: "Tema",
     themeSystem: "Sistema",
     themeLight: "Claro",
     themeDark: "Oscuro",
     apiDocs: "API",
-    rawToggle: "Datos en bruto",
-    rawToggleHide: "Ocultar datos en bruto",
-    rawTitle: "Datos en bruto en tiempo real",
-    rawCopy: "Copiar endpoint",
-    rawClose: "Cerrar",
-    recoverHistory: "Recuperar histórico",
+    livePill: "Datos en tiempo real",
+    liveError: "Sin datos recientes",
     delayTitle: "Distribución de retrasos",
     productsTitle: "Tipos de tren activos",
     corridorsTitle: "Corredores con más tráfico",
@@ -72,21 +70,34 @@ const I18N = {
     historicalProductsTitle: "Distribución histórica por tipo",
     accountabilityRoutesTitle: "Rutas reincidentes",
     accountabilityTrainsTitle: "Trenes reincidentes",
+    trendTitle: "Evolución del retraso medio",
+    trendAvg: "Retraso medio (min)",
+    trendPeak: "Pico (min)",
+    trendNoData: "Sin serie diaria para este período",
     historyFromLabel: "Desde",
     historyToLabel: "Hasta",
     historyApplyRange: "Aplicar rango",
     historyClearRange: "Limpiar",
     trainsTitle: "Trenes activos",
     apply: "Aplicar",
-    searchPlaceholder: "Buscar por tren, corredor o estación",
-    minDelayPlaceholder: "Min retraso",
+    searchPlaceholder: "Buscar por tren, corredor o estación...",
+    minDelayLabel: "Min retraso",
     thTrain: "Tren",
     thType: "Tipo",
     thCorridor: "Corredor",
-    thRoute: "Origen -> Destino",
+    thRoute: "Origen → Destino",
     thNext: "Prox. estación",
     thDelay: "Retraso",
     thLast: "Última señal",
+    thRank: "#",
+    thRouteShort: "Ruta",
+    thObs: "Obs.",
+    thAvg: "Retraso medio",
+    thMax: "Máx.",
+    thOver15: ">15 min",
+    thOver60: ">60 min",
+    headType: "Tipo",
+    headObs: "Observaciones",
     cardActive: "Trenes activos",
     cardAvg: "Retraso medio",
     cardMax: "Retraso máximo",
@@ -95,8 +106,17 @@ const I18N = {
     cardAccessible: "Accesibles",
     cardObs: "Observaciones hoy",
     cardKm: "Km trazados hoy",
-    cardProblematicType: "Tren más problemático (min acumulados)",
+    cardProblematicType: "Tren más problemático",
     cardVolumeType: "Tipo con más trenes/km",
+    subActive: "en circulación ahora",
+    subAvgToday: "ponderado hoy",
+    subMaxToday: "pico de hoy",
+    subOfTotal: "del total",
+    subAccessible: "de {total} trenes",
+    subObs: "registros procesados",
+    subKm: "kilómetros recorridos",
+    subProblematic: "minutos acumulados",
+    subVolume: "trenes / km hoy",
     noTypeData: "Sin datos",
     histCardObservations: "Observaciones",
     histCardUniqueTrains: "Trenes únicos",
@@ -145,7 +165,7 @@ const I18N = {
     noRows: "No hay trenes para este filtro.",
     noLocalRows: "No hay resultados para el filtro local.",
     corridorsSearchPlaceholder: "Filtrar corredores",
-    historicalProductsSearchPlaceholder: "Filtrar tipos históricos",
+    historicalProductsSearchPlaceholder: "Filtrar tipos",
     accountabilityRoutesSearchPlaceholder: "Filtrar rutas críticas",
     accountabilityTrainsSearchPlaceholder: "Filtrar trenes reincidentes",
     tooltipInfoAria: "Más información de la métrica",
@@ -163,43 +183,37 @@ const I18N = {
       "Ejes origen↔destino con peor reincidencia. Se agrupan A↔B juntos y se exige un mínimo de observaciones.",
     tipAvgTrainsPerBatch:
       "Media de trenes recibidos por ciclo de ingesta. Ayuda a detectar bajadas de cobertura del proveedor.",
-    routeSeparator: " -> ",
+    routeSeparator: " → ",
     keyRequestFailed: "No se pudo obtener clave API",
-    rawGenerated: "Generado",
-    rawCount: "Trenes",
-    rawCoverage: "Cobertura 48h",
-    rawMissingRuns: "huecos estimados",
-    rawCopyOk: "Endpoint copiado",
-    rawCopyFail: "No se pudo copiar el endpoint",
-    recoverDone: "Recuperación completada",
-    recoverFail: "No se pudo recuperar histórico",
     syncNow: "Sincronizar",
-    syncAvailable: "Hay datos nuevos. Pulsa sincronizar.",
     exportCsv: "Exportar CSV",
     exportExcel: "Exportar Excel",
     exportDone: "Exportación completada",
     exportFail: "No se pudo exportar",
-    sortAsc: "Ascendente",
-    sortDesc: "Descendente",
     minutes: "min",
     docsOpenFail: "No se pudo abrir la documentación API",
+    footerTagline: "Datos abiertos para un transporte más puntual",
+    footerApi: "API",
+    footerDocs: "Documentación",
+    footerMethod: "Metodología",
+    footerSource: "Código",
   },
   en: {
-    kicker: "retrasometro",
     title: "Real-time rail delays",
-    subtitle: "",
+    subtitle: "Track train punctuality across the whole Spanish rail network",
+    navHome: "Home",
+    navTrains: "Trains",
+    navStats: "Statistics",
+    navApi: "API",
+    navAbout: "About",
     langLabel: "Language",
     themeLabel: "Theme",
     themeSystem: "System",
     themeLight: "Light",
     themeDark: "Dark",
     apiDocs: "API",
-    rawToggle: "Raw data",
-    rawToggleHide: "Hide raw data",
-    rawTitle: "Raw live data",
-    rawCopy: "Copy endpoint",
-    rawClose: "Close",
-    recoverHistory: "Recover history",
+    livePill: "Live data",
+    liveError: "No recent data",
     delayTitle: "Delay distribution",
     productsTitle: "Active train types",
     corridorsTitle: "Top traffic corridors",
@@ -209,21 +223,34 @@ const I18N = {
     historicalProductsTitle: "Historical distribution by type",
     accountabilityRoutesTitle: "Repeat routes",
     accountabilityTrainsTitle: "Repeat trains",
+    trendTitle: "Average delay over time",
+    trendAvg: "Average delay (min)",
+    trendPeak: "Peak (min)",
+    trendNoData: "No daily series for this range",
     historyFromLabel: "From",
     historyToLabel: "To",
     historyApplyRange: "Apply range",
     historyClearRange: "Clear",
     trainsTitle: "Active trains",
     apply: "Apply",
-    searchPlaceholder: "Search by train, corridor or station",
-    minDelayPlaceholder: "Min delay",
+    searchPlaceholder: "Search by train, corridor or station...",
+    minDelayLabel: "Min delay",
     thTrain: "Train",
     thType: "Type",
     thCorridor: "Corridor",
-    thRoute: "Origin -> Destination",
+    thRoute: "Origin → Destination",
     thNext: "Next station",
     thDelay: "Delay",
     thLast: "Last signal",
+    thRank: "#",
+    thRouteShort: "Route",
+    thObs: "Obs.",
+    thAvg: "Avg delay",
+    thMax: "Max",
+    thOver15: ">15 min",
+    thOver60: ">60 min",
+    headType: "Type",
+    headObs: "Observations",
     cardActive: "Active trains",
     cardAvg: "Average delay",
     cardMax: "Max delay",
@@ -232,8 +259,17 @@ const I18N = {
     cardAccessible: "Accessible",
     cardObs: "Observations today",
     cardKm: "Tracked km today",
-    cardProblematicType: "Most problematic train (accumulated min)",
+    cardProblematicType: "Most problematic type",
     cardVolumeType: "Top type by trains/km",
+    subActive: "running right now",
+    subAvgToday: "weighted today",
+    subMaxToday: "today's peak",
+    subOfTotal: "of total",
+    subAccessible: "of {total} trains",
+    subObs: "records processed",
+    subKm: "kilometres tracked",
+    subProblematic: "accumulated minutes",
+    subVolume: "trains / km today",
     noTypeData: "No data",
     histCardObservations: "Observations",
     histCardUniqueTrains: "Unique trains",
@@ -282,7 +318,7 @@ const I18N = {
     noRows: "No trains match the current filters.",
     noLocalRows: "No results for this local filter.",
     corridorsSearchPlaceholder: "Filter corridors",
-    historicalProductsSearchPlaceholder: "Filter historical types",
+    historicalProductsSearchPlaceholder: "Filter types",
     accountabilityRoutesSearchPlaceholder: "Filter critical routes",
     accountabilityTrainsSearchPlaceholder: "Filter repeat trains",
     tooltipInfoAria: "More metric info",
@@ -300,38 +336,21 @@ const I18N = {
       "Origin↔destination axes with worst repeat delay ratios. A↔B and B↔A are grouped, with minimum observation thresholds.",
     tipAvgTrainsPerBatch:
       "Average trains per ingestion batch. Useful to detect provider coverage drops.",
-    routeSeparator: " -> ",
+    routeSeparator: " → ",
     keyRequestFailed: "Could not request API key",
-    rawGenerated: "Generated",
-    rawCount: "Trains",
-    rawCoverage: "48h coverage",
-    rawMissingRuns: "estimated missing slots",
-    rawCopyOk: "Endpoint copied",
-    rawCopyFail: "Could not copy endpoint",
-    recoverDone: "Recovery completed",
-    recoverFail: "Could not recover history",
     syncNow: "Sync",
-    syncAvailable: "New data available. Click sync.",
     exportCsv: "Export CSV",
     exportExcel: "Export Excel",
     exportDone: "Export completed",
     exportFail: "Could not export",
-    sortAsc: "Ascending",
-    sortDesc: "Descending",
     minutes: "min",
     docsOpenFail: "Could not open API docs",
+    footerTagline: "Open data for a more punctual railway",
+    footerApi: "API",
+    footerDocs: "Documentation",
+    footerMethod: "Methodology",
+    footerSource: "Source code",
   },
-};
-
-const storageGet = (key, legacyKey = "") => {
-  const value = localStorage.getItem(key);
-  if (value !== null) {
-    return value;
-  }
-  if (legacyKey) {
-    return localStorage.getItem(legacyKey);
-  }
-  return null;
 };
 
 const state = {
@@ -339,8 +358,8 @@ const state = {
   minDelay: "",
   limit: 120,
   offset: 0,
-  lang: storageGet("retrasometro_lang", "renfe_lang") === "en" ? "en" : "es",
-  historyHours: Number(storageGet("retrasometro_history_hours", "renfe_history_hours")) || 168,
+  lang: localStorage.getItem("retrasometro_lang") === "en" ? "en" : "es",
+  historyHours: Number(localStorage.getItem("retrasometro_history_hours")) || 168,
   historyFrom: "",
   historyTo: "",
   corridorsQuery: "",
@@ -357,18 +376,16 @@ const state = {
   trainsItems: [],
   sortBy: "delay",
   sortDir: "desc",
-  isRawOpen: false,
-  rawTimer: null,
 };
 
 const AUTO_REFRESH_MS = 5_000;
 
 let latestDashboard = null;
 let numberFmt = new Intl.NumberFormat("es-ES");
-let themeController = null;
 
 const t = (key) => I18N[state.lang][key] || key;
 const locale = () => (state.lang === "es" ? "es-ES" : "en-US");
+const icon = (name, extraClass = "") => `<svg class="${extraClass}"><use href="#i-${name}" /></svg>`;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -377,8 +394,7 @@ const asTime = (epochSeconds) => {
     return "-";
   }
 
-  const date = new Date(epochSeconds * 1000);
-  return date.toLocaleString(locale(), {
+  return new Date(epochSeconds * 1000).toLocaleString(locale(), {
     hour12: false,
     day: "2-digit",
     month: "2-digit",
@@ -387,6 +403,11 @@ const asTime = (epochSeconds) => {
     second: "2-digit",
   });
 };
+
+const asDate = (epochSeconds) =>
+  epochSeconds
+    ? new Date(epochSeconds * 1000).toLocaleDateString(locale(), { day: "2-digit", month: "2-digit", year: "numeric" })
+    : "-";
 
 const escapeHtml = (value) => {
   if (value === null || value === undefined) {
@@ -402,20 +423,14 @@ const escapeHtml = (value) => {
 };
 
 const metricLabelWithInfo = (label, infoText, idSuffix) => {
-  const safeLabel = escapeHtml(label);
-  const safeInfo = escapeHtml(infoText);
   const tipId = `tip-${idSuffix}`;
-  return `<span class="label-with-tip">${safeLabel}<span class="metric-info"><button type="button" class="info-trigger" aria-label="${escapeHtml(t("tooltipInfoAria"))}" aria-controls="${tipId}" aria-expanded="false">ⓘ</button><span id="${tipId}" class="info-popover" role="tooltip">${safeInfo}</span></span></span>`;
+  return `<span class="label-with-tip">${escapeHtml(label)}<span class="metric-info"><button type="button" class="info-trigger" aria-label="${escapeHtml(t("tooltipInfoAria"))}" aria-controls="${tipId}" aria-expanded="false">${icon("info")}</button><span id="${tipId}" class="info-popover" role="tooltip">${escapeHtml(infoText)}</span></span></span>`;
 };
 
 const closeOpenTooltips = () => {
-  const wrappers = document.querySelectorAll(".metric-info.open");
-  for (const wrapper of wrappers) {
+  for (const wrapper of document.querySelectorAll(".metric-info.open")) {
     wrapper.classList.remove("open");
-    const trigger = wrapper.querySelector(".info-trigger");
-    if (trigger) {
-      trigger.setAttribute("aria-expanded", "false");
-    }
+    wrapper.querySelector(".info-trigger")?.setAttribute("aria-expanded", "false");
   }
 };
 
@@ -425,19 +440,11 @@ const toBigIntLoose = (value) => {
   }
 
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      return 0n;
-    }
-    return BigInt(Math.trunc(value));
+    return Number.isFinite(value) ? BigInt(Math.trunc(value)) : 0n;
   }
 
   if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return 0n;
-    }
-
-    const intLike = trimmed.match(/^(-?\d+)(?:[.,]\d+)?$/);
+    const intLike = value.trim().match(/^(-?\d+)(?:[.,]\d+)?$/);
     if (intLike) {
       try {
         return BigInt(intLike[1]);
@@ -459,6 +466,9 @@ const formatLargeInt = (value) => {
   }
 };
 
+const fmt1 = (value) => Number(value || 0).toFixed(1);
+const pct = (part, total) => (total > 0 ? ((part / total) * 100).toFixed(1) : "0.0");
+
 const delayClass = (delay) => {
   if (delay < 0) return "ahead";
   if (delay === 0) return "ok";
@@ -467,21 +477,22 @@ const delayClass = (delay) => {
   return "severe";
 };
 
-const delayLabel = (delay) => {
-  if (delay > 0) return `+${delay} ${t("minutes")}`;
-  return `${delay} ${t("minutes")}`;
-};
+const delayTone = (delay) => (delay > 60 ? "tone-danger" : delay > 15 ? "tone-warning" : "");
+
+const delayLabel = (delay) => `${delay > 0 ? "+" : ""}${delay} ${t("minutes")}`;
 
 const setStatus = (text, type = "") => {
   statusPillEl.textContent = text;
-  statusPillEl.classList.remove("ok", "error");
+  footerStatusTextEl.textContent = text;
+  heroStatusEl.classList.remove("ok", "error");
   if (type) {
-    statusPillEl.classList.add(type);
+    heroStatusEl.classList.add(type);
   }
+  liveTextEl.textContent = type === "error" ? t("liveError") : t("livePill");
 };
 
 const updateTextContent = (id, value) => {
-  const element = document.querySelector(`#${id}`);
+  const element = document.getElementById(id);
   if (element) {
     element.textContent = value;
   }
@@ -489,25 +500,31 @@ const updateTextContent = (id, value) => {
 
 const setPendingSync = (pending) => {
   state.hasPendingSync = pending;
-  if (!syncBtnEl) {
-    return;
-  }
-
   syncBtnEl.classList.toggle("hidden", !pending);
 };
 
 const normalizeText = (value) => String(value ?? "").toLocaleLowerCase(locale());
+
+const stationPair = (origin, destination, originCode, destinationCode) =>
+  `${origin || originCode || "-"}${t("routeSeparator")}${destination || destinationCode || "-"}`;
+
+const nextStation = (nextName, nextCode, eta) => {
+  const station = nextName || nextCode || "-";
+  return eta ? `${station} (${eta.replace("T", " ").slice(0, 16)})` : station;
+};
+
+const sourceBadge = (source) =>
+  source === "derived_axis"
+    ? `<span class="source-badge derived">${escapeHtml(t("corridorSourceDerived"))}</span>`
+    : `<span class="source-badge official">${escapeHtml(t("corridorSourceOfficial"))}</span>`;
 
 const getTrainSortValue = (train, field) => {
   if (field === "train") return normalizeText(train.cod_comercial);
   if (field === "type") return normalizeText(train.product_name);
   if (field === "corridor") return normalizeText(train.des_corridor);
   if (field === "route")
-    return normalizeText(
-      stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino),
-    );
-  if (field === "next")
-    return normalizeText(nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est));
+    return normalizeText(stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino));
+  if (field === "next") return normalizeText(nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est));
   if (field === "delay") return Number(train.ult_retraso ?? 0);
   if (field === "last") return Number(train.last_seen_at ?? 0);
   return "";
@@ -515,16 +532,12 @@ const getTrainSortValue = (train, field) => {
 
 const sortTrains = (items) => {
   const direction = state.sortDir === "asc" ? 1 : -1;
-  const field = state.sortBy;
-
   return [...items].sort((a, b) => {
-    const va = getTrainSortValue(a, field);
-    const vb = getTrainSortValue(b, field);
-
+    const va = getTrainSortValue(a, state.sortBy);
+    const vb = getTrainSortValue(b, state.sortBy);
     if (typeof va === "number" && typeof vb === "number") {
       return (va - vb) * direction;
     }
-
     return String(va).localeCompare(String(vb), locale()) * direction;
   });
 };
@@ -532,109 +545,107 @@ const sortTrains = (items) => {
 const renderSortIndicators = () => {
   for (const button of sortButtons) {
     const field = button.dataset.sort;
-    if (!field) {
-      continue;
-    }
-
-    const indicator = document.querySelector(`#sort-indicator-${field}`);
     const isActive = field === state.sortBy;
     button.classList.toggle("active", isActive);
-
-    if (indicator) {
-      indicator.textContent = isActive ? (state.sortDir === "asc" ? "↑" : "↓") : "↕";
-    }
+    updateTextContent(`sort-indicator-${field}`, isActive ? (state.sortDir === "asc" ? "↑" : "↓") : "↕");
   }
 };
 
 const setHistoryButtonsActive = () => {
   const hasCustom = Boolean(state.historyFrom || state.historyTo);
   for (const button of historyButtons) {
-    const isActive = !hasCustom && Number(button.dataset.hours) === state.historyHours;
-    button.classList.toggle("active", isActive);
+    button.classList.toggle("active", !hasCustom && Number(button.dataset.hours) === state.historyHours);
   }
+};
+
+const renderHistoryRange = (historical) => {
+  if (!historical) {
+    historyRangeTextEl.textContent = "…";
+    return;
+  }
+  historyRangeTextEl.textContent = `${asDate(historical.sinceEpoch)} → ${asDate(historical.untilEpoch ?? historical.nowEpoch)}`;
 };
 
 const applyStaticTexts = () => {
   document.documentElement.lang = state.lang;
   numberFmt = new Intl.NumberFormat(locale());
 
-  updateTextContent("kicker-text", t("kicker"));
-  updateTextContent("title-text", t("title"));
-  updateTextContent("subtitle-text", t("subtitle"));
-  updateTextContent("lang-label", t("langLabel"));
-  updateTextContent("theme-label", t("themeLabel"));
-  if (themeOptionSystemEl) {
-    themeOptionSystemEl.textContent = t("themeSystem");
+  const plain = {
+    "title-text": "title",
+    "subtitle-text": "subtitle",
+    "nav-home": "navHome",
+    "nav-trains": "navTrains",
+    "nav-stats": "navStats",
+    "nav-api": "navApi",
+    "nav-about": "navAbout",
+    "lang-label": "langLabel",
+    "theme-label": "themeLabel",
+    "theme-option-system": "themeSystem",
+    "theme-option-light": "themeLight",
+    "theme-option-dark": "themeDark",
+    "api-docs-label": "apiDocs",
+    "delay-title": "delayTitle",
+    "products-title": "productsTitle",
+    "corridors-title": "corridorsTitle",
+    "today-title": "todayTitle",
+    "historical-title": "historicalTitle",
+    "historical-highlights-title": "historicalHighlightsTitle",
+    "historical-products-title": "historicalProductsTitle",
+    "trend-title": "trendTitle",
+    "trend-legend-avg": "trendAvg",
+    "trend-legend-peak": "trendPeak",
+    "hp-head-type": "headType",
+    "hp-head-obs": "headObs",
+    "hp-head-avg": "thAvg",
+    "history-from-label": "historyFromLabel",
+    "history-to-label": "historyToLabel",
+    "history-range-apply": "historyApplyRange",
+    "history-range-clear": "historyClearRange",
+    "trains-title": "trainsTitle",
+    "min-delay-label": "minDelayLabel",
+    "min-delay-unit": "minutes",
+    "apply-btn": "apply",
+    "sync-btn": "syncNow",
+    "export-csv-label": "exportCsv",
+    "export-excel-label": "exportExcel",
+    "th-train": "thTrain",
+    "th-type": "thType",
+    "th-corridor": "thCorridor",
+    "th-route": "thRoute",
+    "th-next": "thNext",
+    "th-delay": "thDelay",
+    "th-last": "thLast",
+    "footer-tagline": "footerTagline",
+    "footer-api": "footerApi",
+    "footer-docs": "footerDocs",
+    "footer-method": "footerMethod",
+    "footer-source": "footerSource",
+  };
+  for (const [id, key] of Object.entries(plain)) {
+    updateTextContent(id, t(key));
   }
-  if (themeOptionLightEl) {
-    themeOptionLightEl.textContent = t("themeLight");
-  }
-  if (themeOptionDarkEl) {
-    themeOptionDarkEl.textContent = t("themeDark");
-  }
-  updateTextContent("api-docs-btn", t("apiDocs"));
-  updateTextContent("raw-toggle-btn", state.isRawOpen ? t("rawToggleHide") : t("rawToggle"));
-  updateTextContent("raw-title", t("rawTitle"));
-  updateTextContent("copy-raw-btn", t("rawCopy"));
-  updateTextContent("close-raw-btn", t("rawClose"));
-  updateTextContent("recover-history-btn", t("recoverHistory"));
-  updateTextContent("delay-title", t("delayTitle"));
-  updateTextContent("products-title", t("productsTitle"));
-  updateTextContent("corridors-title", t("corridorsTitle"));
-  updateTextContent("today-title", t("todayTitle"));
-  updateTextContent("historical-title", t("historicalTitle"));
-  updateTextContent("historical-highlights-title", t("historicalHighlightsTitle"));
-  updateTextContent("historical-products-title", t("historicalProductsTitle"));
-  const accountabilityRoutesTitleEl = document.querySelector("#accountability-routes-title");
-  if (accountabilityRoutesTitleEl) {
-    accountabilityRoutesTitleEl.innerHTML = metricLabelWithInfo(
-      t("accountabilityRoutesTitle"),
-      t("tipCriticalRoutes"),
-      "title-critical-routes",
-    );
-  }
-  const accountabilityTrainsTitleEl = document.querySelector("#accountability-trains-title");
-  if (accountabilityTrainsTitleEl) {
-    accountabilityTrainsTitleEl.innerHTML = metricLabelWithInfo(
-      t("accountabilityTrainsTitle"),
-      t("tipRepeatOffenders"),
-      "title-repeat-offenders",
-    );
-  }
-  updateTextContent("history-from-label", t("historyFromLabel"));
-  updateTextContent("history-to-label", t("historyToLabel"));
-  updateTextContent("history-range-apply", t("historyApplyRange"));
-  updateTextContent("history-range-clear", t("historyClearRange"));
-  updateTextContent("trains-title", t("trainsTitle"));
-  updateTextContent("apply-btn", t("apply"));
-  updateTextContent("sync-btn", t("syncNow"));
-  updateTextContent("export-csv-btn", t("exportCsv"));
-  updateTextContent("export-excel-btn", t("exportExcel"));
-  updateTextContent("th-train", t("thTrain"));
-  updateTextContent("th-type", t("thType"));
-  updateTextContent("th-corridor", t("thCorridor"));
-  updateTextContent("th-route", t("thRoute"));
-  updateTextContent("th-next", t("thNext"));
-  updateTextContent("th-delay", t("thDelay"));
-  updateTextContent("th-last", t("thLast"));
+
+  $("#accountability-routes-title").innerHTML = metricLabelWithInfo(
+    t("accountabilityRoutesTitle"),
+    t("tipCriticalRoutes"),
+    "title-critical-routes",
+  );
+  $("#accountability-trains-title").innerHTML = metricLabelWithInfo(
+    t("accountabilityTrainsTitle"),
+    t("tipRepeatOffenders"),
+    "title-repeat-offenders",
+  );
 
   searchInput.placeholder = t("searchPlaceholder");
-  minDelayInput.placeholder = t("minDelayPlaceholder");
-  if (corridorsSearchInputEl) {
-    corridorsSearchInputEl.placeholder = t("corridorsSearchPlaceholder");
-  }
-  if (historicalProductsSearchInputEl) {
-    historicalProductsSearchInputEl.placeholder = t("historicalProductsSearchPlaceholder");
-  }
-  if (accountabilityRoutesSearchInputEl) {
-    accountabilityRoutesSearchInputEl.placeholder = t("accountabilityRoutesSearchPlaceholder");
-  }
-  if (accountabilityTrainsSearchInputEl) {
-    accountabilityTrainsSearchInputEl.placeholder = t("accountabilityTrainsSearchPlaceholder");
-  }
+  corridorsSearchInputEl.placeholder = t("corridorsSearchPlaceholder");
+  historicalProductsSearchInputEl.placeholder = t("historicalProductsSearchPlaceholder");
+  accountabilityRoutesSearchInputEl.placeholder = t("accountabilityRoutesSearchPlaceholder");
+  accountabilityTrainsSearchInputEl.placeholder = t("accountabilityTrainsSearchPlaceholder");
 
   if (!latestDashboard) {
     setStatus(t("statusLoading"));
+  } else {
+    liveTextEl.textContent = heroStatusEl.classList.contains("error") ? t("liveError") : t("livePill");
   }
 
   setHistoryButtonsActive();
@@ -643,9 +654,7 @@ const applyStaticTexts = () => {
   renderSortIndicators();
 };
 
-const buildUrl = (path) => {
-  return new URL(path, window.location.origin).toString();
-};
+const buildUrl = (path) => new URL(path, window.location.origin).toString();
 
 const requestApiKey = async ({ force = false } = {}) => {
   if (!force && state.apiKey && Date.now() < state.apiKeyExpiresAt - 10_000) {
@@ -655,9 +664,7 @@ const requestApiKey = async ({ force = false } = {}) => {
   const response = await fetch(buildUrl("/api/auth/request-key"), {
     method: "GET",
     cache: "no-store",
-    headers: {
-      "accept-language": state.lang,
-    },
+    headers: { "accept-language": state.lang },
   });
 
   if (!response.ok) {
@@ -673,21 +680,17 @@ const requestApiKey = async ({ force = false } = {}) => {
   }
 };
 
-const isAuthError = (payload) => {
-  if (!payload || typeof payload !== "object") {
-    return false;
-  }
-
-  return payload.code === "MISSING_API_KEY" || payload.code === "INVALID_API_KEY" || payload.code === "EXPIRED_API_KEY";
-};
+const isAuthError = (payload) =>
+  Boolean(payload) &&
+  typeof payload === "object" &&
+  ["MISSING_API_KEY", "INVALID_API_KEY", "EXPIRED_API_KEY"].includes(payload.code);
 
 const apiFetch = async (path, options = {}) => {
   const execute = async () => {
     await requestApiKey();
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const elapsed = Date.now() - state.lastRequestAtMs;
-      const waitMs = Math.max(0, state.apiMinIntervalMs + 10 - elapsed);
+      const waitMs = Math.max(0, state.apiMinIntervalMs + 10 - (Date.now() - state.lastRequestAtMs));
       if (waitMs > 0) {
         await sleep(waitMs);
       }
@@ -697,11 +700,7 @@ const apiFetch = async (path, options = {}) => {
       headers.set("x-api-key", state.apiKey || "");
 
       state.lastRequestAtMs = Date.now();
-      const response = await fetch(buildUrl(path), {
-        ...options,
-        headers,
-        cache: "no-store",
-      });
+      const response = await fetch(buildUrl(path), { ...options, headers, cache: "no-store" });
 
       if (response.status === 401) {
         let payload = null;
@@ -739,7 +738,6 @@ const apiFetch = async (path, options = {}) => {
 
 const readJsonResponse = async (response) => {
   let payload = null;
-
   try {
     payload = await response.json();
   } catch {
@@ -747,60 +745,99 @@ const readJsonResponse = async (response) => {
   }
 
   if (!response.ok) {
-    const message = payload?.message || `${response.status}`;
-    throw new Error(message);
+    throw new Error(payload?.message || `${response.status}`);
   }
 
   return payload;
 };
 
+const cardHtml = ({ icon: iconName, iconTone = "", tone = "", label, labelHtml, value, sub, subClass = "", progress }) => `
+  <article class="card ${tone}">
+    <div class="kpi-icon ${iconTone}">${icon(iconName)}</div>
+    <div class="kpi-body">
+      <div class="label">${labelHtml ?? escapeHtml(label)}</div>
+      <div class="value ${/^\d/.test(String(value)) ? "" : "text"}">${escapeHtml(value)}</div>
+      ${progress !== undefined ? `<div class="progress"><i style="width:${Math.max(0, Math.min(100, progress)).toFixed(1)}%"></i></div>` : ""}
+      ${sub ? `<div class="sub ${subClass}">${escapeHtml(sub)}</div>` : ""}
+    </div>
+  </article>
+`;
+
 const renderOverviewCards = (overview, today, typeInsights) => {
   const problematic = typeInsights?.problematic ?? null;
   const volume = typeInsights?.volume ?? null;
-
-  const problematicValue = problematic
-    ? `${problematic.productName} · ${formatLargeInt(problematic.accumulatedDelayMinutes)} ${t("minutes")}`
-    : t("noTypeData");
-
-  const volumeValue = volume
-    ? `${volume.productName} · ${numberFmt.format(volume.trains)} / ${numberFmt.format(Math.round(volume.totalKm))} km`
-    : t("noTypeData");
+  const active = Number(overview.activeTrains || 0);
 
   const cards = [
-    { label: t("cardActive"), value: numberFmt.format(overview.activeTrains) },
-    { label: t("cardAvg"), value: `${overview.avgDelay.toFixed(1)} ${t("minutes")}` },
-    { label: t("cardMax"), value: `${overview.maxDelay} ${t("minutes")}` },
-    { label: t("cardOver15"), value: numberFmt.format(overview.delayedOver15) },
-    { label: t("cardOver60"), value: numberFmt.format(overview.severeOver60) },
-    { label: t("cardAccessible"), value: `${overview.accessiblePct}%` },
-    { label: t("cardObs"), value: numberFmt.format(today.observations) },
-    { label: t("cardKm"), value: numberFmt.format(Math.round(today.kmTracked)) },
-    { label: t("cardProblematicType"), value: problematicValue },
-    { label: t("cardVolumeType"), value: volumeValue },
+    { icon: "train", label: t("cardActive"), value: numberFmt.format(active), sub: t("subActive") },
+    {
+      icon: "clock",
+      tone: delayTone(overview.avgDelay),
+      label: t("cardAvg"),
+      value: `${fmt1(overview.avgDelay)} ${t("minutes")}`,
+      sub: `${t("subAvgToday")}: ${fmt1(today.weightedAvgDelay)} ${t("minutes")}`,
+    },
+    {
+      icon: "alert",
+      tone: delayTone(overview.maxDelay),
+      label: t("cardMax"),
+      value: `${overview.maxDelay} ${t("minutes")}`,
+      sub: `${t("subMaxToday")}: ${today.peakDelay} ${t("minutes")}`,
+    },
+    {
+      icon: "pie",
+      iconTone: overview.delayedOver15 > 0 ? "warning" : "",
+      label: t("cardOver15"),
+      value: numberFmt.format(overview.delayedOver15),
+      sub: `${pct(overview.delayedOver15, active)}% ${t("subOfTotal")}`,
+    },
+    {
+      icon: "alert-circle",
+      iconTone: overview.severeOver60 > 0 ? "danger" : "",
+      label: t("cardOver60"),
+      value: numberFmt.format(overview.severeOver60),
+      sub: `${pct(overview.severeOver60, active)}% ${t("subOfTotal")}`,
+    },
+    {
+      icon: "access",
+      label: t("cardAccessible"),
+      value: `${overview.accessiblePct}%`,
+      progress: Number(overview.accessiblePct || 0),
+      sub: `${numberFmt.format(overview.accessibleCount)} ${t("subAccessible").replace("{total}", numberFmt.format(active))}`,
+    },
+    { icon: "database", label: t("cardObs"), value: numberFmt.format(today.observations), sub: t("subObs") },
+    { icon: "route", label: t("cardKm"), value: numberFmt.format(Math.round(today.kmTracked)), sub: t("subKm") },
+    {
+      icon: "alert",
+      iconTone: "danger",
+      label: t("cardProblematicType"),
+      value: problematic ? problematic.productName : t("noTypeData"),
+      sub: problematic ? `${formatLargeInt(problematic.accumulatedDelayMinutes)} ${t("subProblematic")}` : "",
+      subClass: "danger",
+    },
+    {
+      icon: "bar",
+      label: t("cardVolumeType"),
+      value: volume ? volume.productName : t("noTypeData"),
+      sub: volume ? `${numberFmt.format(volume.trains)} / ${numberFmt.format(Math.round(volume.totalKm))} km · ${t("subVolume")}` : "",
+      subClass: "accent",
+    },
   ];
 
-  overviewCardsEl.innerHTML = cards
-    .map(
-      (card) => `
-      <article class="card">
-        <div class="label">${escapeHtml(card.label)}</div>
-        <div class="value">${escapeHtml(card.value)}</div>
-      </article>
-    `,
-    )
-    .join("");
+  overviewCardsEl.innerHTML = cards.map(cardHtml).join("");
 };
 
 const renderBarRows = (target, rows) => {
   target.classList.remove("skeleton-bars");
   target.innerHTML = rows
     .map((row) => {
-      const pct = Math.max(0, Math.min(100, row.pct));
+      const width = Math.max(0, Math.min(100, row.pct)).toFixed(1);
       return `
         <div class="bar-row">
-          <span>${escapeHtml(row.label)}</span>
-          <div class="track"><div class="fill ${row.tone ?? ""}" style="width: ${pct.toFixed(1)}%"></div></div>
+          <span title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span>
+          <div class="track"><div class="fill ${row.tone ?? ""}" style="width: ${width}%"></div></div>
           <strong>${escapeHtml(row.value)}</strong>
+          ${row.extra !== undefined ? `<em>${escapeHtml(row.extra)}</em>` : ""}
         </div>
       `;
     })
@@ -815,58 +852,48 @@ const renderDelayBuckets = (buckets) => {
     { label: t("bucketMild"), value: buckets.mild, tone: "ok" },
     { label: t("bucketMedium"), value: buckets.medium, tone: "warning" },
     { label: t("bucketSevere"), value: buckets.severe, tone: "danger" },
-  ].map((row) => ({
-    ...row,
-    pct: (row.value / total) * 100,
-    value: numberFmt.format(row.value),
-  }));
+  ].map((row) => ({ ...row, pct: (row.value / total) * 100, value: numberFmt.format(row.value) }));
 
   renderBarRows(delayBucketsEl, rows);
 };
 
+const toneForAvg = (avg) => (avg > 60 ? "danger" : avg > 15 ? "warning" : "");
+
 const renderProducts = (products) => {
   const max = products.reduce((acc, item) => Math.max(acc, item.count), 1);
-
   const rows = products.slice(0, 10).map((item) => ({
     label: `${item.productName} (${item.codProduct})`,
-    value: `${item.count} | ${item.avgDelay.toFixed(1)} ${t("minutes")}`,
+    value: `${item.count} · ${fmt1(item.avgDelay)} ${t("minutes")}`,
     pct: (item.count / max) * 100,
-    tone: item.avgDelay > 60 ? "danger" : item.avgDelay > 15 ? "warning" : "",
+    tone: toneForAvg(item.avgDelay),
   }));
 
   renderBarRows(productsEl, rows);
 };
 
-const renderCorridors = (corridors) => {
-  const filter = state.corridorsQuery.trim().toLocaleLowerCase(locale());
-  const visibleCorridors =
-    filter.length === 0
-      ? corridors
-      : corridors.filter((item) =>
-          `${String(item.corridor || "")} ${String(item.axisLabel || "")} ${String(item.axisKey || "")}`
-            .toLocaleLowerCase(locale())
-            .includes(filter),
-        );
+const emptyRow = (text) => `<div class="list-item"><div class="meta">${escapeHtml(text)}</div></div>`;
 
-  if (!Array.isArray(visibleCorridors) || visibleCorridors.length === 0) {
-    corridorsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
+const matchesFilter = (filter, ...fields) =>
+  filter.length === 0 || fields.map((f) => String(f || "")).join(" ").toLocaleLowerCase(locale()).includes(filter);
+
+const renderCorridors = (corridors) => {
+  corridorsEl.classList.remove("skeleton-list");
+  const filter = normalizeText(state.corridorsQuery.trim());
+  const visible = corridors.filter((item) => matchesFilter(filter, item.corridor, item.axisLabel, item.axisKey));
+
+  if (visible.length === 0) {
+    corridorsEl.innerHTML = emptyRow(t("noLocalRows"));
     return;
   }
 
-  corridorsEl.innerHTML = visibleCorridors
+  corridorsEl.innerHTML = visible
     .map(
-      (item) => {
-        const sourceLabel =
-          item.source === "derived_axis" ? t("corridorSourceDerived") : t("corridorSourceOfficial");
-        const sourceClass = item.source === "derived_axis" ? "derived" : "official";
-        return `
+      (item) => `
       <div class="list-item">
-        <div class="name">${escapeHtml(item.corridor)} <span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div>
-        <div class="meta">${numberFmt.format(item.train_count)} ${t("corridorActive")}</div>
-        <div class="meta">${t("corridorDelay")}: ${item.avg_delay.toFixed(1)} ${t("minutes")} | ${t("corridorPeak")}: ${item.max_delay} ${t("minutes")}</div>
+        <div class="name">${escapeHtml(item.corridor)} ${sourceBadge(item.source)}</div>
+        <div class="meta">${numberFmt.format(item.train_count)} ${t("corridorActive")} · ${t("corridorDelay")}: ${fmt1(item.avg_delay)} ${t("minutes")} · ${t("corridorPeak")}: ${item.max_delay} ${t("minutes")}</div>
       </div>
-    `;
-      },
+    `,
     )
     .join("");
 };
@@ -878,12 +905,11 @@ const renderToday = (today) => {
     { label: t("todayUnique"), value: numberFmt.format(today.uniqueTrains) },
     { label: t("todayObs"), value: numberFmt.format(today.observations) },
     {
-      label: t("todayWeighted"),
       labelHtml: metricLabelWithInfo(t("todayWeighted"), t("tipWeightedAvgDelay"), "today-weighted-delay"),
-      value: `${today.weightedAvgDelay.toFixed(1)} ${t("minutes")}`,
+      value: `${fmt1(today.weightedAvgDelay)} ${t("minutes")}`,
     },
     { label: t("todayPeak"), value: `${today.peakDelay} ${t("minutes")}` },
-    { label: t("todayKm"), value: `${Math.round(today.kmTracked)} km` },
+    { label: t("todayKm"), value: `${numberFmt.format(Math.round(today.kmTracked))} km` },
   ];
 
   todayMetricsEl.innerHTML = items
@@ -898,225 +924,288 @@ const renderToday = (today) => {
     .join("");
 };
 
+const pctCell = (value) => {
+  const n = Number(value || 0);
+  return `<td class="num ${n >= 50 ? "bad" : n >= 20 ? "warn" : ""}">${n.toFixed(1)}%</td>`;
+};
+
+const miniTable = (headers, rows) => `
+  <table class="mini-table">
+    <thead><tr>${headers.map((h) => `<th class="${h.num ? "num" : ""}">${escapeHtml(h.label)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.join("")}</tbody>
+  </table>
+`;
+
 const renderAccountability = (accountability) => {
   accountabilityRoutesEl.classList.remove("skeleton-list");
   accountabilityTrainsEl.classList.remove("skeleton-list");
 
   if (!accountability || !accountability.summary) {
-    accountabilityRoutesEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
-    accountabilityTrainsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
+    accountabilityRoutesEl.innerHTML = emptyRow(t("accountabilityNoData"));
+    accountabilityTrainsEl.innerHTML = emptyRow(t("accountabilityNoData"));
     return;
   }
 
-  const summary = accountability.summary || {};
-  const worsening = summary.worseningVs7d || {};
-  const trend =
-    worsening.trend === "worsening"
-      ? t("accountabilityTrendWorsening")
-      : worsening.trend === "improving"
-        ? t("accountabilityTrendImproving")
-        : t("accountabilityTrendFlat");
-
-  const routes = Array.isArray(accountability.criticalRoutes) ? accountability.criticalRoutes : [];
-  const routesFilter = state.accountabilityRoutesQuery.trim().toLocaleLowerCase(locale());
-  const visibleRoutes =
-    routesFilter.length === 0
-      ? routes
-      : routes.filter((item) =>
-          `${String(item.axisLabel || "")} ${String(item.axisKey || "")}`
-            .toLocaleLowerCase(locale())
-            .includes(routesFilter),
-        );
-
-  const routesSummary = `
-    <div class="list-item compact">
-      <div class="name">${metricLabelWithInfo(t("accountabilityDelayed15"), t("tipDelayed15"), "accountability-delayed15")} ${Number(summary.delayed15Pct || 0).toFixed(1)}%</div>
-      <div class="meta">${metricLabelWithInfo(t("accountabilitySevere60"), t("tipSevere60"), "accountability-severe60")} ${Number(summary.severe60Pct || 0).toFixed(1)}%</div>
-      <div class="meta">${escapeHtml(t("accountabilityTrendLabel"))}: ${escapeHtml(trend)}</div>
-    </div>
-  `;
-
-  const routeRows = visibleRoutes
-    .slice(0, 12)
-    .map((item) => {
-      const sourceLabel =
-        item.source === "derived_axis" ? t("corridorSourceDerived") : t("corridorSourceOfficial");
-      const sourceClass = item.source === "derived_axis" ? "derived" : "official";
-      return `
-        <div class="list-item">
-          <div class="name">${escapeHtml(item.axisLabel || "-")} <span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div>
-          <div class="meta">${numberFmt.format(item.observations || 0)} ${t("histObsShort")} · ${Number(item.avgDelay || 0).toFixed(1)} ${t("minutes")} · max ${item.maxDelay || 0} ${t("minutes")}</div>
-          <div class="meta">${t("accountabilityDelayed15")}: ${Number(item.delayed15Pct || 0).toFixed(1)}% · ${t("accountabilitySevere60")}: ${Number(item.severe60Pct || 0).toFixed(1)}%</div>
-        </div>
-      `;
-    })
-    .join("");
+  const routesFilter = normalizeText(state.accountabilityRoutesQuery.trim());
+  const routes = (Array.isArray(accountability.criticalRoutes) ? accountability.criticalRoutes : [])
+    .filter((item) => matchesFilter(routesFilter, item.axisLabel, item.axisKey))
+    .slice(0, 12);
 
   accountabilityRoutesEl.innerHTML =
-    routesSummary +
-    (routeRows.length > 0
-      ? routeRows
-      : `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`);
-
-  const offenders = Array.isArray(accountability.repeatOffenders) ? accountability.repeatOffenders : [];
-  const offendersFilter = state.accountabilityTrainsQuery.trim().toLocaleLowerCase(locale());
-  const visibleOffenders =
-    offendersFilter.length === 0
-      ? offenders
-      : offenders.filter((item) =>
-          `${String(item.codComercial || "")} ${String(item.productName || item.codProduct || "")} ${String(item.origin || "")} ${String(item.destination || "")}`
-            .toLocaleLowerCase(locale())
-            .includes(offendersFilter),
+    routes.length === 0
+      ? emptyRow(t("noLocalRows"))
+      : miniTable(
+          [
+            { label: t("thRank") },
+            { label: t("thRouteShort") },
+            { label: t("thObs"), num: true },
+            { label: t("thAvg"), num: true },
+            { label: t("thMax"), num: true },
+            { label: t("thOver15"), num: true },
+            { label: t("thOver60"), num: true },
+          ],
+          routes.map(
+            (item, index) => `
+            <tr>
+              <td class="rank">${index + 1}</td>
+              <td class="route">${escapeHtml(item.axisLabel || "-")} ${sourceBadge(item.source)}</td>
+              <td class="num">${numberFmt.format(item.observations || 0)}</td>
+              <td class="num">${fmt1(item.avgDelay)}</td>
+              <td class="num">${item.maxDelay || 0}</td>
+              ${pctCell(item.delayed15Pct)}
+              ${pctCell(item.severe60Pct)}
+            </tr>
+          `,
+          ),
         );
 
-  if (visibleOffenders.length === 0) {
-    accountabilityTrainsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
+  const offendersFilter = normalizeText(state.accountabilityTrainsQuery.trim());
+  const offenders = (Array.isArray(accountability.repeatOffenders) ? accountability.repeatOffenders : [])
+    .filter((item) =>
+      matchesFilter(offendersFilter, item.codComercial, item.productName || item.codProduct, item.origin, item.destination),
+    )
+    .slice(0, 12);
+
+  accountabilityTrainsEl.innerHTML =
+    offenders.length === 0
+      ? emptyRow(t("noLocalRows"))
+      : miniTable(
+          [
+            { label: t("thRank") },
+            { label: t("thTrain") },
+            { label: t("thRouteShort") },
+            { label: t("thObs"), num: true },
+            { label: t("thAvg"), num: true },
+            { label: t("thMax"), num: true },
+            { label: t("thOver15"), num: true },
+            { label: t("thOver60"), num: true },
+          ],
+          offenders.map(
+            (item, index) => `
+            <tr>
+              <td class="rank">${index + 1}</td>
+              <td><strong>${escapeHtml(item.codComercial || "-")}</strong><br /><span class="muted">${escapeHtml(item.productName || item.codProduct || "-")}</span></td>
+              <td class="route">${escapeHtml(stationPair(item.origin, item.destination, null, null))}</td>
+              <td class="num">${numberFmt.format(item.observations || 0)}</td>
+              <td class="num">${fmt1(item.avgDelay)}</td>
+              <td class="num">${item.maxDelay || 0}</td>
+              ${pctCell(item.delayed15Pct)}
+              ${pctCell(item.severe60Pct)}
+            </tr>
+          `,
+          ),
+        );
+};
+
+const niceCeil = (value) => {
+  if (value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const step = magnitude * (value / magnitude <= 2 ? 0.5 : value / magnitude <= 5 ? 1 : 2);
+  return Math.ceil(value / step) * step;
+};
+
+const renderTrendChart = (trend) => {
+  const points = (Array.isArray(trend) ? trend : []).filter((p) => p && p.day);
+  if (points.length === 0) {
+    trendChartEl.innerHTML = `<p class="chart-empty">${escapeHtml(t("trendNoData"))}</p>`;
     return;
   }
 
-  accountabilityTrainsEl.innerHTML = visibleOffenders
-    .slice(0, 12)
+  const W = 640;
+  const H = 240;
+  const padL = 46;
+  const padR = 14;
+  const padT = 12;
+  const padB = 30;
+  const avg = points.map((p) => Math.max(0, Number(p.weighted_avg_delay ?? 0)));
+  const peak = points.map((p) => Math.max(0, Number(p.peak_delay ?? 0)));
+  const maxY = niceCeil(Math.max(1, ...peak, ...avg));
+  const x = (i) => (points.length === 1 ? padL + (W - padL - padR) / 2 : padL + (i / (points.length - 1)) * (W - padL - padR));
+  const y = (v) => padT + (1 - v / maxY) * (H - padT - padB);
+  const line = (arr) => arr.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const area = (arr) => `${line(arr)} L${x(arr.length - 1).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => maxY * k);
+  const gridHtml = ticks
     .map(
-      (item) => `
-        <div class="list-item">
-          <div class="name">${escapeHtml(item.codComercial || "-")} · ${escapeHtml(item.productName || item.codProduct || "-")}</div>
-          <div class="meta">${escapeHtml(stationPair(item.origin, item.destination, null, null))}</div>
-          <div class="meta">${numberFmt.format(item.observations || 0)} ${t("histObsShort")} · ${Number(item.avgDelay || 0).toFixed(1)} ${t("minutes")} · max ${item.maxDelay || 0} ${t("minutes")}</div>
-          <div class="meta">${t("accountabilityDelayed15")}: ${Number(item.delayed15Pct || 0).toFixed(1)}% · ${t("accountabilitySevere60")}: ${Number(item.severe60Pct || 0).toFixed(1)}%</div>
-        </div>
-      `,
+      (v) =>
+        `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" /><text class="axis-text" x="${padL - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${Math.round(v)} ${t("minutes")}</text>`,
     )
     .join("");
+
+  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  const labelsHtml = points
+    .map((p, i) =>
+      i % labelEvery === 0 || i === points.length - 1
+        ? `<text class="axis-text" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${escapeHtml(String(p.day).slice(5).split("-").reverse().join("/"))}</text>`
+        : "",
+    )
+    .join("");
+
+  const dotsHtml =
+    points.length <= 16
+      ? avg.map((v, i) => `<circle class="dot" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.5"><title>${escapeHtml(points[i].day)}: ${fmt1(v)} ${t("minutes")} · ${t("trendPeak")} ${peak[i]}</title></circle>`).join("")
+      : "";
+
+  trendChartEl.innerHTML = `
+    <svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(t("trendTitle"))}">
+      ${gridHtml}
+      <path class="area-peak" d="${area(peak)}" />
+      <path class="line-peak" d="${line(peak)}" />
+      <path class="area-avg" d="${area(avg)}" />
+      <path class="line-avg" d="${line(avg)}" />
+      ${dotsHtml}
+      ${labelsHtml}
+    </svg>
+  `;
+};
+
+const findingHtml = (iconName, name, headline, meta, headlineClass = "") => `
+  <div class="finding">
+    ${icon(iconName)}
+    <div>
+      <div class="name">${escapeHtml(name)}</div>
+      <div class="headline ${headlineClass}">${headline}</div>
+      ${meta ? `<div class="meta">${meta}</div>` : ""}
+    </div>
+  </div>
+`;
+
+const renderHighlights = (historical) => {
+  historicalHighlightsEl.classList.remove("skeleton-list");
+  const topType = historical.topProblematicProduct;
+  const topCorridor = historical.topProblematicCorridor;
+  const summary = historical.accountability?.summary;
+  const rows = [];
+
+  if (topType) {
+    rows.push(
+      findingHtml(
+        "train",
+        t("histTopType"),
+        escapeHtml(topType.productName || "-"),
+        `${formatLargeInt(topType.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topType.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topType.trains || 0)} ${t("histTrainsShort")}`,
+      ),
+    );
+  }
+
+  if (topCorridor) {
+    rows.push(
+      findingHtml(
+        "route",
+        t("histTopCorridor"),
+        `${escapeHtml(topCorridor.corridor || t("histNoCorridor"))} ${sourceBadge(topCorridor.source)}`,
+        `${formatLargeInt(topCorridor.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topCorridor.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topCorridor.trains || 0)} ${t("histTrainsShort")}`,
+        "accent",
+      ),
+    );
+  }
+
+  if (summary) {
+    const trend = summary.worseningVs7d?.trend;
+    const trendKey =
+      trend === "worsening" ? "accountabilityTrendWorsening" : trend === "improving" ? "accountabilityTrendImproving" : "accountabilityTrendFlat";
+    const delta = Number(summary.worseningVs7d?.deltaDelayed15Pct || 0);
+    rows.push(
+      findingHtml(
+        "activity",
+        t("accountabilityTrendLabel"),
+        `<span class="trend-badge ${escapeHtml(trend || "flat")}">${escapeHtml(t(trendKey))} ${delta > 0 ? "+" : ""}${delta.toFixed(1)} pp</span>`,
+        `${metricLabelWithInfo(t("accountabilityDelayed15"), t("tipDelayed15"), "accountability-delayed15")} ${fmt1(summary.delayed15Pct)}% · ${metricLabelWithInfo(t("accountabilitySevere60"), t("tipSevere60"), "accountability-severe60")} ${fmt1(summary.severe60Pct)}%`,
+      ),
+    );
+  }
+
+  historicalHighlightsEl.innerHTML = rows.length > 0 ? rows.join("") : emptyRow(t("histNoData"));
 };
 
 const renderHistorical = (historical) => {
   historicalProductsEl.classList.remove("skeleton-bars");
-  historicalHighlightsEl.classList.remove("skeleton-list");
-  accountabilityRoutesEl.classList.remove("skeleton-list");
-  accountabilityTrainsEl.classList.remove("skeleton-list");
+  renderHistoryRange(historical);
+
   if (!historical || !historical.summary) {
     historicalCardsEl.innerHTML = "";
-    historicalHighlightsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("histNoData"))}</div></div>`;
+    historicalHighlightsEl.classList.remove("skeleton-list");
+    historicalHighlightsEl.innerHTML = emptyRow(t("histNoData"));
     historicalProductsEl.innerHTML = "";
-    accountabilityRoutesEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
-    accountabilityTrainsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("accountabilityNoData"))}</div></div>`;
+    trendChartEl.innerHTML = "";
+    renderAccountability(null);
     return;
   }
 
   const summary = historical.summary;
   const ingestion = historical.ingestion || {};
+  const severe = Number(summary.severePct || 0);
 
-  const cards = [
-    { label: t("histCardObservations"), value: numberFmt.format(summary.observations || 0) },
-    { label: t("histCardUniqueTrains"), value: numberFmt.format(summary.uniqueTrains || 0) },
-    { label: t("histCardAvgDelay"), value: `${Number(summary.avgDelay || 0).toFixed(1)} ${t("minutes")}` },
-    { label: t("histCardMaxDelay"), value: `${summary.maxDelay || 0} ${t("minutes")}` },
+  historicalCardsEl.innerHTML = [
+    { icon: "database", label: t("histCardObservations"), value: numberFmt.format(summary.observations || 0) },
+    { icon: "train", label: t("histCardUniqueTrains"), value: numberFmt.format(summary.uniqueTrains || 0) },
+    { icon: "clock", label: t("histCardAvgDelay"), value: `${fmt1(summary.avgDelay)} ${t("minutes")}` },
+    { icon: "alert", iconTone: "danger", label: t("histCardMaxDelay"), value: `${summary.maxDelay || 0} ${t("minutes")}` },
     {
-      label: t("histCardAccumDelay"),
+      icon: "sigma",
       labelHtml: metricLabelWithInfo(t("histCardAccumDelay"), t("tipAccumDelay"), "hist-accum-delay"),
       value: `${formatLargeInt(summary.accumulatedDelayMinutes)} ${t("minutes")}`,
     },
-    { label: t("histCardOnTimePct"), value: `${Number(summary.onTimePct || 0).toFixed(1)}%` },
-    { label: t("histCardSeverePct"), value: `${Number(summary.severePct || 0).toFixed(1)}%` },
+    { icon: "check", iconTone: "success", label: t("histCardOnTimePct"), value: `${fmt1(summary.onTimePct)}%` },
+    { icon: "alert-circle", iconTone: severe >= 5 ? "danger" : severe >= 1 ? "warning" : "", label: t("histCardSeverePct"), value: `${fmt1(severe)}%` },
     {
-      label: t("histCardAvgBatch"),
+      icon: "activity",
       labelHtml: metricLabelWithInfo(t("histCardAvgBatch"), t("tipAvgTrainsPerBatch"), "hist-avg-batch"),
       value: numberFmt.format(Math.round(ingestion.avgTrainsPerBatch || 0)),
     },
-  ];
-
-  historicalCardsEl.innerHTML = cards
-    .map(
-      (card) => `
-      <article class="card">
-        <div class="label">${card.labelHtml ?? escapeHtml(card.label)}</div>
-        <div class="value">${escapeHtml(card.value)}</div>
-      </article>
-    `,
-    )
+  ]
+    .map(cardHtml)
     .join("");
 
-  const topType = historical.topProblematicProduct;
-  const topCorridor = historical.topProblematicCorridor;
+  renderHighlights(historical);
+  renderTrendChart(historical.dailyTrend);
 
-  const highlightRows = [];
+  const productFilter = normalizeText(state.historicalProductsQuery.trim());
+  const byProduct = (Array.isArray(historical.byProduct) ? historical.byProduct : []).filter((item) =>
+    matchesFilter(productFilter, item.productName || item.productNameEs || item.codProduct || item.cod_product),
+  );
 
-  if (topType) {
-    highlightRows.push(`
-      <div class="list-item">
-        <div class="name">${escapeHtml(t("histTopType"))}: ${escapeHtml(topType.productName || "-")}</div>
-        <div class="meta">${formatLargeInt(topType.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topType.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topType.trains || 0)} ${t("histTrainsShort")}</div>
-      </div>
-    `);
+  if (byProduct.length === 0) {
+    historicalProductsEl.innerHTML = emptyRow(t("noLocalRows"));
+  } else {
+    const maxObs = byProduct.reduce((max, item) => Math.max(max, Number(item.observations || 0)), 1);
+    renderBarRows(
+      historicalProductsEl,
+      byProduct.slice(0, 8).map((item) => {
+        const avg = Number(item.avg_delay ?? item.avgDelay ?? 0);
+        return {
+          label: `${item.productName || item.productNameEs || item.codProduct || "-"} (${item.codProduct ?? item.cod_product ?? "-"})`,
+          value: numberFmt.format(item.observations || 0),
+          extra: `${fmt1(avg)} ${t("minutes")}`,
+          pct: ((item.observations || 0) / maxObs) * 100,
+          tone: toneForAvg(avg),
+        };
+      }),
+    );
   }
 
-  if (topCorridor) {
-    const corridorName = topCorridor.corridor || t("histNoCorridor");
-    const sourceLabel =
-      topCorridor.source === "derived_axis" ? t("corridorSourceDerived") : t("corridorSourceOfficial");
-    const sourceClass = topCorridor.source === "derived_axis" ? "derived" : "official";
-    highlightRows.push(`
-      <div class="list-item">
-        <div class="name">${escapeHtml(t("histTopCorridor"))}: ${escapeHtml(corridorName)} <span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div>
-        <div class="meta">${formatLargeInt(topCorridor.accumulatedDelayMinutes)} ${t("minutes")} · ${numberFmt.format(topCorridor.observations || 0)} ${t("histObsShort")} · ${numberFmt.format(topCorridor.trains || 0)} ${t("histTrainsShort")}</div>
-      </div>
-    `);
-  }
-
-  historicalHighlightsEl.innerHTML =
-    highlightRows.length > 0
-      ? highlightRows.join("")
-      : `<div class="list-item"><div class="meta">${escapeHtml(t("histNoData"))}</div></div>`;
-
-  const byProduct = Array.isArray(historical.byProduct) ? historical.byProduct : [];
-  const productFilter = state.historicalProductsQuery.trim().toLocaleLowerCase(locale());
-  const visibleByProduct =
-    productFilter.length === 0
-      ? byProduct
-      : byProduct.filter((item) => {
-          const productName = item.productName || item.productNameEs || item.codProduct || item.cod_product;
-          return String(productName ?? "")
-            .toLocaleLowerCase(locale())
-            .includes(productFilter);
-        });
-
-  if (visibleByProduct.length === 0) {
-    historicalProductsEl.innerHTML = `<div class="list-item"><div class="meta">${escapeHtml(t("noLocalRows"))}</div></div>`;
-    renderAccountability(historical.accountability ?? null);
-    return;
-  }
-
-  const maxObs = visibleByProduct.reduce((max, item) => Math.max(max, Number(item.observations || 0)), 1);
-  const rows = visibleByProduct.slice(0, 8).map((item) => ({
-    label: `${item.productName || item.productNameEs || item.codProduct || "-"} (${item.codProduct ?? item.cod_product ?? "-"})`,
-    value: `${numberFmt.format(item.observations || 0)} ${t("histObsShort")} | ${Number(item.avg_delay ?? item.avgDelay ?? 0).toFixed(1)} ${t("minutes")}`,
-    pct: ((item.observations || 0) / maxObs) * 100,
-    tone:
-      Number(item.avg_delay ?? item.avgDelay ?? 0) > 60
-        ? "danger"
-        : Number(item.avg_delay ?? item.avgDelay ?? 0) > 15
-          ? "warning"
-          : "",
-  }));
-
-  renderBarRows(historicalProductsEl, rows);
   renderAccountability(historical.accountability ?? null);
-};
-
-const stationPair = (origin, destination, originCode, destinationCode) => {
-  const from = origin || originCode || "-";
-  const to = destination || destinationCode || "-";
-  return `${from}${t("routeSeparator")}${to}`;
-};
-
-const nextStation = (nextName, nextCode, eta) => {
-  const station = nextName || nextCode || "-";
-  if (!eta) {
-    return station;
-  }
-
-  const shortEta = eta.replace("T", " ").slice(0, 16);
-  return `${station} (${shortEta})`;
 };
 
 const renderTrains = (data) => {
@@ -1131,24 +1220,15 @@ const renderTrains = (data) => {
   trainsBodyEl.innerHTML = sortedItems
     .map((train) => {
       const delay = Number(train.ult_retraso ?? 0);
-      const css = delayClass(delay);
-      const route = stationPair(
-        train.origin_name,
-        train.destination_name,
-        train.cod_origen,
-        train.cod_destino,
-      );
-      const next = nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est);
-
       return `
         <tr>
-          <td>${escapeHtml(train.cod_comercial)}</td>
+          <td><strong>${escapeHtml(train.cod_comercial)}</strong></td>
           <td>${escapeHtml(train.product_name)}</td>
           <td>${escapeHtml(train.des_corridor || "-")}</td>
-          <td>${escapeHtml(route)}</td>
-          <td>${escapeHtml(next)}</td>
-          <td><span class="delay ${css}">${escapeHtml(delayLabel(delay))}</span></td>
-          <td>${escapeHtml(asTime(train.last_seen_at))}</td>
+          <td>${escapeHtml(stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino))}</td>
+          <td>${escapeHtml(nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est))}</td>
+          <td><span class="delay ${delayClass(delay)}">${escapeHtml(delayLabel(delay))}</span></td>
+          <td class="nowrap">${escapeHtml(asTime(train.last_seen_at))}</td>
         </tr>
       `;
     })
@@ -1159,30 +1239,8 @@ const rerenderLocalFilteredPanels = () => {
   if (!latestDashboard) {
     return;
   }
-
   renderCorridors(Array.isArray(latestDashboard.topCorridors) ? latestDashboard.topCorridors : []);
   renderHistorical(latestDashboard.historical ?? null);
-};
-
-const renderRaw = (payload) => {
-  if (!payload) {
-    rawMetaEl.textContent = "-";
-    rawJsonEl.textContent = "{ }";
-    return;
-  }
-
-  const generatedAt = payload.generatedAt
-    ? new Date(payload.generatedAt).toLocaleString(locale(), { hour12: false })
-    : "-";
-
-  const count = Array.isArray(payload.trainsCurrent) ? payload.trainsCurrent.length : 0;
-  const coverage = payload.historyCoverage;
-  const missing = coverage?.estimatedMissingRuns ?? 0;
-  const observedRuns = coverage?.observedRuns ?? 0;
-  const expectedRuns = coverage?.expectedRuns ?? 0;
-
-  rawMetaEl.textContent = `${t("rawGenerated")}: ${generatedAt} · ${t("rawCount")}: ${count} · ${t("rawCoverage")}: ${observedRuns}/${expectedRuns} · ${t("rawMissingRuns")}: ${missing}`;
-  rawJsonEl.textContent = JSON.stringify(payload, null, 2);
 };
 
 const loadDashboard = async () => {
@@ -1192,17 +1250,10 @@ const loadDashboard = async () => {
   params.set("offset", String(state.offset));
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.minDelay.trim()) params.set("minDelay", state.minDelay.trim());
+  if (state.historyFrom) params.set("historyFrom", state.historyFrom);
+  if (state.historyTo) params.set("historyTo", state.historyTo);
 
-  if (state.historyFrom) {
-    params.set("historyFrom", state.historyFrom);
-  }
-
-  if (state.historyTo) {
-    params.set("historyTo", state.historyTo);
-  }
-
-  const response = await apiFetch(`/api/dashboard?${params.toString()}`);
-  const data = await readJsonResponse(response);
+  const data = await readJsonResponse(await apiFetch(`/api/dashboard?${params.toString()}`));
 
   latestDashboard = data;
   state.lastAppliedSuccessAt = Number(data?.ingestor?.lastSuccessAt || state.lastAppliedSuccessAt || 0);
@@ -1217,60 +1268,37 @@ const loadDashboard = async () => {
   if (data.historical) renderHistorical(data.historical);
   if (data.trains) renderTrains(data.trains);
 
-  lastSeenEl.textContent = data.overview.lastSeenAtIso
-    ? `${t("lastSignal")}: ${new Date(data.overview.lastSeenAtIso).toLocaleString(locale(), {
-        hour12: false,
-      })}`
-    : `${t("lastSignal")}: -`;
+  lastSeenEl.textContent = `${t("lastSignal")}: ${
+    data.overview.lastSeenAtIso ? new Date(data.overview.lastSeenAtIso).toLocaleString(locale(), { hour12: false }) : "-"
+  }`;
 
   const ingest = data.ingestor;
   if (ingest.lastError) {
     setStatus(`${t("statusError")}: ${ingest.lastError}`, "error");
-  } else {
-    const updatedAt =
-      (ingest.lastSuccessAt ? new Date(ingest.lastSuccessAt * 1000) : null) ??
-      (data.overview.lastSeenAtIso ? new Date(data.overview.lastSeenAtIso) : null);
-
-    if (updatedAt) {
-      setStatus(`${t("statusLastUpdate")}: ${updatedAt.toLocaleString(locale(), { hour12: false })}`, "ok");
-    } else {
-      setStatus(t("statusNoUpdate"), "ok");
-    }
-  }
-};
-
-const loadTrains = async () => {
-  const params = new URLSearchParams();
-  params.set("limit", String(state.limit));
-  params.set("offset", String(state.offset));
-
-  if (state.query.trim()) {
-    params.set("q", state.query.trim());
-  }
-
-  if (state.minDelay.trim()) {
-    params.set("minDelay", state.minDelay.trim());
-  }
-
-  const response = await apiFetch(`/api/trains?${params.toString()}`);
-  const data = await readJsonResponse(response);
-  renderTrains(data);
-};
-
-let rawLoading = false;
-const loadRawLive = async () => {
-  if (!state.isRawOpen || rawLoading) {
     return;
   }
 
-  try {
-    rawLoading = true;
-    const response = await apiFetch("/api/raw/live");
-    const data = await readJsonResponse(response);
-    renderRaw(data);
-  } catch (error) {
-    rawMetaEl.textContent = error instanceof Error ? error.message : String(error);
-  } finally { rawLoading = false; }
+  const updatedAt =
+    (ingest.lastSuccessAt ? new Date(ingest.lastSuccessAt * 1000) : null) ??
+    (data.overview.lastSeenAtIso ? new Date(data.overview.lastSeenAtIso) : null);
+  setStatus(
+    updatedAt ? `${t("statusLastUpdate")}: ${updatedAt.toLocaleString(locale(), { hour12: false })}` : t("statusNoUpdate"),
+    "ok",
+  );
+};
+
+const trainsParams = (limit, offset) => {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  if (state.query.trim()) params.set("q", state.query.trim());
+  if (state.minDelay.trim()) params.set("minDelay", state.minDelay.trim());
+  return params;
+};
+
+const loadTrains = async () => {
+  const data = await readJsonResponse(await apiFetch(`/api/trains?${trainsParams(state.limit, state.offset)}`));
+  renderTrains(data);
 };
 
 const checkForPendingSync = async () => {
@@ -1278,13 +1306,10 @@ const checkForPendingSync = async () => {
     const response = await fetch(buildUrl("/api/health"), {
       method: "GET",
       cache: "no-store",
-      headers: {
-        "accept-language": state.lang,
-      },
+      headers: { "accept-language": state.lang },
     });
     const data = await readJsonResponse(response);
-    const incomingSuccessAt = Number(data?.ingestor?.lastSuccessAt || 0);
-    if (incomingSuccessAt > state.lastAppliedSuccessAt) {
+    if (Number(data?.ingestor?.lastSuccessAt || 0) > state.lastAppliedSuccessAt) {
       setPendingSync(true);
       await refresh();
     }
@@ -1305,24 +1330,32 @@ const refresh = () => {
       refreshAgain = false;
       await loadDashboard();
     } while (refreshAgain);
-  })().catch((error) => {
-    setStatus(error instanceof Error ? error.message : String(error), "error");
-  }).finally(() => { refreshPromise = null; });
+  })()
+    .catch((error) => {
+      setStatus(error instanceof Error ? error.message : String(error), "error");
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
   return refreshPromise;
 };
 
 let eventsConnected = false;
-const autoRefreshTick = async () => {
-  if (!document.hidden && !eventsConnected) await checkForPendingSync();
-};
-
 const events = new EventSource(buildUrl("/api/events"));
-events.onopen = () => { eventsConnected = true; if (latestDashboard && !document.hidden) void refresh(); };
-events.onerror = () => { eventsConnected = false; };
+events.onopen = () => {
+  eventsConnected = true;
+  if (latestDashboard && !document.hidden) void refresh();
+};
+events.onerror = () => {
+  eventsConnected = false;
+};
 events.onmessage = (event) => {
   const update = JSON.parse(event.data);
-  if (!document.hidden && latestDashboard &&
-      (Number(update.lastSuccessAt) > state.lastAppliedSuccessAt || update.kind === "history")) {
+  if (
+    !document.hidden &&
+    latestDashboard &&
+    (Number(update.lastSuccessAt) > state.lastAppliedSuccessAt || update.kind === "history")
+  ) {
     void refresh();
   }
 };
@@ -1330,49 +1363,18 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) void checkForPendingSync();
 });
 
-const stopRawPolling = () => {
-  if (state.rawTimer) {
-    clearInterval(state.rawTimer);
-    state.rawTimer = null;
-  }
-};
-
-const startRawPolling = () => {
-  stopRawPolling();
-  void loadRawLive();
-  state.rawTimer = setInterval(() => {
-    void loadRawLive();
-  }, 3000);
-};
-
-const toggleRawPanel = () => {
-  state.isRawOpen = !state.isRawOpen;
-  rawPanelEl.classList.toggle("hidden", !state.isRawOpen);
-  applyStaticTexts();
-
-  if (state.isRawOpen) {
-    startRawPolling();
-  } else {
-    stopRawPolling();
-  }
-};
-
 const toCsvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 
-const toExportRows = (items) => {
-  return sortTrains(items).map((train) => {
-    const delay = Number(train.ult_retraso ?? 0);
-    return {
-      train: train.cod_comercial ?? "",
-      type: train.product_name ?? "",
-      corridor: train.des_corridor ?? "",
-      route: stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino),
-      next: nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est),
-      delay,
-      last: asTime(train.last_seen_at),
-    };
-  });
-};
+const toExportRows = (items) =>
+  sortTrains(items).map((train) => ({
+    train: train.cod_comercial ?? "",
+    type: train.product_name ?? "",
+    corridor: train.des_corridor ?? "",
+    route: stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino),
+    next: nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est),
+    delay: Number(train.ult_retraso ?? 0),
+    last: asTime(train.last_seen_at),
+  }));
 
 const fetchAllFilteredTrains = async () => {
   const items = [];
@@ -1381,28 +1383,13 @@ const fetchAllFilteredTrains = async () => {
   let total = Infinity;
 
   while (offset < total) {
-    const params = new URLSearchParams();
-    params.set("limit", String(limit));
-    params.set("offset", String(offset));
-
-    if (state.query.trim()) {
-      params.set("q", state.query.trim());
-    }
-
-    if (state.minDelay.trim()) {
-      params.set("minDelay", state.minDelay.trim());
-    }
-
-    const response = await apiFetch(`/api/trains?${params.toString()}`);
-    const data = await readJsonResponse(response);
+    const data = await readJsonResponse(await apiFetch(`/api/trains?${trainsParams(limit, offset)}`));
     const pageItems = Array.isArray(data.items) ? data.items : [];
     total = Number(data.total ?? pageItems.length);
     items.push(...pageItems);
-
     if (pageItems.length === 0) {
       break;
     }
-
     offset += pageItems.length;
   }
 
@@ -1410,8 +1397,7 @@ const fetchAllFilteredTrains = async () => {
 };
 
 const downloadFile = (filename, mimeType, content) => {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
@@ -1421,20 +1407,30 @@ const downloadFile = (filename, mimeType, content) => {
   URL.revokeObjectURL(url);
 };
 
+const exportHeaders = () => [t("thTrain"), t("thType"), t("thCorridor"), t("thRoute"), t("thNext"), t("thDelay"), t("thLast")];
+const exportFilename = (ext) => `trenes-activos-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.${ext}`;
+
+const runExport = async (build) => {
+  try {
+    const rows = toExportRows(await fetchAllFilteredTrains());
+    build(rows);
+    setStatus(t("exportDone"), "ok");
+  } catch (error) {
+    setStatus(`${t("exportFail")}: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+};
+
 filtersForm.addEventListener("submit", (event) => {
   event.preventDefault();
-
   state.query = searchInput.value;
   state.minDelay = minDelayInput.value;
   state.offset = 0;
-
   void loadTrains();
 });
 
 langSwitchEl.addEventListener("change", () => {
   state.lang = langSwitchEl.value === "en" ? "en" : "es";
   localStorage.setItem("retrasometro_lang", state.lang);
-  localStorage.removeItem("renfe_lang");
   applyStaticTexts();
   void refresh();
 });
@@ -1445,16 +1441,10 @@ for (const button of historyButtons) {
     if (!Number.isFinite(hours) || hours < 1) {
       return;
     }
-
     state.historyHours = hours;
     state.historyFrom = "";
     state.historyTo = "";
     localStorage.setItem("retrasometro_history_hours", String(hours));
-    localStorage.removeItem("retrasometro_history_from");
-    localStorage.removeItem("retrasometro_history_to");
-    localStorage.removeItem("renfe_history_hours");
-    localStorage.removeItem("renfe_history_from");
-    localStorage.removeItem("renfe_history_to");
     setHistoryButtonsActive();
     historyFromInputEl.value = "";
     historyToInputEl.value = "";
@@ -1462,13 +1452,14 @@ for (const button of historyButtons) {
   });
 }
 
+historyRangeToggleEl.addEventListener("click", () => {
+  const open = historyRangeEl.classList.toggle("hidden");
+  historyRangeToggleEl.setAttribute("aria-expanded", String(!open));
+});
+
 historyRangeApplyBtnEl.addEventListener("click", () => {
   state.historyFrom = historyFromInputEl.value || "";
   state.historyTo = historyToInputEl.value || "";
-  localStorage.setItem("retrasometro_history_from", state.historyFrom);
-  localStorage.setItem("retrasometro_history_to", state.historyTo);
-  localStorage.removeItem("renfe_history_from");
-  localStorage.removeItem("renfe_history_to");
   setHistoryButtonsActive();
   setStatus(t("histRangeApplied"), "ok");
   void refresh();
@@ -1477,10 +1468,6 @@ historyRangeApplyBtnEl.addEventListener("click", () => {
 historyRangeClearBtnEl.addEventListener("click", () => {
   state.historyFrom = "";
   state.historyTo = "";
-  localStorage.removeItem("retrasometro_history_from");
-  localStorage.removeItem("retrasometro_history_to");
-  localStorage.removeItem("renfe_history_from");
-  localStorage.removeItem("renfe_history_to");
   historyFromInputEl.value = "";
   historyToInputEl.value = "";
   setHistoryButtonsActive();
@@ -1489,147 +1476,68 @@ historyRangeClearBtnEl.addEventListener("click", () => {
 });
 
 apiDocsBtnEl.addEventListener("click", () => {
-  const docsUrl = buildUrl("/api-docs.html");
-  const opened = window.open(docsUrl, "_blank", "noopener,noreferrer");
-  if (!opened) {
+  if (!window.open(buildUrl("/api-docs.html"), "_blank", "noopener,noreferrer")) {
     setStatus(t("docsOpenFail"), "error");
   }
 });
 
-if (rawToggleBtnEl) {
-  rawToggleBtnEl.addEventListener("click", () => {
-    toggleRawPanel();
-  });
-}
-
-closeRawBtnEl.addEventListener("click", () => {
-  if (state.isRawOpen) {
-    toggleRawPanel();
-  }
+syncBtnEl.addEventListener("click", () => {
+  void refresh();
 });
-
-copyRawBtnEl.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(buildUrl("/api/raw/live"));
-    setStatus(t("rawCopyOk"), "ok");
-  } catch {
-    setStatus(t("rawCopyFail"), "error");
-  }
-});
-
-recoverHistoryBtnEl.addEventListener("click", async () => {
-  try {
-    const response = await apiFetch("/api/history/recover?hours=48", { method: "POST" });
-    const data = await readJsonResponse(response);
-    setStatus(`${t("recoverDone")} · +${data.recovered}`, "ok");
-    await loadRawLive();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(`${t("recoverFail")}: ${message}`, "error");
-  }
-});
-
-if (syncBtnEl) {
-  syncBtnEl.addEventListener("click", async () => {
-    await refresh();
-  });
-}
 
 for (const button of sortButtons) {
   button.addEventListener("click", () => {
     const field = button.dataset.sort;
-    if (!field) {
-      return;
-    }
-
     if (state.sortBy === field) {
       state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
     } else {
       state.sortBy = field;
       state.sortDir = "asc";
     }
-
     renderSortIndicators();
     renderTrains({ items: state.trainsItems });
   });
 }
 
-
-if (corridorsSearchInputEl) {
-  corridorsSearchInputEl.addEventListener("input", () => {
-    state.corridorsQuery = corridorsSearchInputEl.value || "";
+const localFilters = [
+  [corridorsSearchInputEl, "corridorsQuery"],
+  [historicalProductsSearchInputEl, "historicalProductsQuery"],
+  [accountabilityRoutesSearchInputEl, "accountabilityRoutesQuery"],
+  [accountabilityTrainsSearchInputEl, "accountabilityTrainsQuery"],
+];
+for (const [input, key] of localFilters) {
+  input.addEventListener("input", () => {
+    state[key] = input.value || "";
     rerenderLocalFilteredPanels();
   });
 }
 
-if (historicalProductsSearchInputEl) {
-  historicalProductsSearchInputEl.addEventListener("input", () => {
-    state.historicalProductsQuery = historicalProductsSearchInputEl.value || "";
-    rerenderLocalFilteredPanels();
-  });
-}
+exportCsvBtnEl.addEventListener("click", () =>
+  runExport((rows) => {
+    const body = rows.map((row) =>
+      [row.train, row.type, row.corridor, row.route, row.next, row.delay, row.last].map(toCsvCell).join(";"),
+    );
+    downloadFile(
+      exportFilename("csv"),
+      "text/csv;charset=utf-8",
+      `﻿${exportHeaders().map(toCsvCell).join(";")}\n${body.join("\n")}\n`,
+    );
+  }),
+);
 
-if (accountabilityRoutesSearchInputEl) {
-  accountabilityRoutesSearchInputEl.addEventListener("input", () => {
-    state.accountabilityRoutesQuery = accountabilityRoutesSearchInputEl.value || "";
-    rerenderLocalFilteredPanels();
-  });
-}
-
-if (accountabilityTrainsSearchInputEl) {
-  accountabilityTrainsSearchInputEl.addEventListener("input", () => {
-    state.accountabilityTrainsQuery = accountabilityTrainsSearchInputEl.value || "";
-    rerenderLocalFilteredPanels();
-  });
-}
-
-if (exportCsvBtnEl) {
-  exportCsvBtnEl.addEventListener("click", async () => {
-    try {
-      const rows = toExportRows(await fetchAllFilteredTrains());
-      const header = [t("thTrain"), t("thType"), t("thCorridor"), t("thRoute"), t("thNext"), t("thDelay"), t("thLast")];
-      const body = rows.map((row) =>
-        [
-          toCsvCell(row.train),
-          toCsvCell(row.type),
-          toCsvCell(row.corridor),
-          toCsvCell(row.route),
-          toCsvCell(row.next),
-          toCsvCell(row.delay),
-          toCsvCell(row.last),
-        ].join(";"),
-      );
-      const csv = `\uFEFF${header.map(toCsvCell).join(";")}\n${body.join("\n")}\n`;
-      downloadFile(`trenes-activos-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.csv`, "text/csv;charset=utf-8", csv);
-      setStatus(t("exportDone"), "ok");
-    } catch (error) {
-      setStatus(`${t("exportFail")}: ${error instanceof Error ? error.message : String(error)}`, "error");
-    }
-  });
-}
-
-if (exportExcelBtnEl) {
-  exportExcelBtnEl.addEventListener("click", async () => {
-    try {
-      const rows = toExportRows(await fetchAllFilteredTrains());
-      const htmlRows = rows
-        .map(
-          (row) =>
-            `<tr><td>${escapeHtml(row.train)}</td><td>${escapeHtml(row.type)}</td><td>${escapeHtml(row.corridor)}</td><td>${escapeHtml(row.route)}</td><td>${escapeHtml(row.next)}</td><td>${escapeHtml(row.delay)}</td><td>${escapeHtml(row.last)}</td></tr>`,
-        )
-        .join("");
-      const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table border="1"><thead><tr><th>${escapeHtml(t("thTrain"))}</th><th>${escapeHtml(t("thType"))}</th><th>${escapeHtml(t("thCorridor"))}</th><th>${escapeHtml(t("thRoute"))}</th><th>${escapeHtml(t("thNext"))}</th><th>${escapeHtml(t("thDelay"))}</th><th>${escapeHtml(t("thLast"))}</th></tr></thead><tbody>${htmlRows}</tbody></table></body></html>`;
-      downloadFile(
-        `trenes-activos-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.xls`,
-        "application/vnd.ms-excel;charset=utf-8",
-        `\uFEFF${html}`,
-      );
-      setStatus(t("exportDone"), "ok");
-    } catch (error) {
-      setStatus(`${t("exportFail")}: ${error instanceof Error ? error.message : String(error)}`, "error");
-    }
-  });
-}
+exportExcelBtnEl.addEventListener("click", () =>
+  runExport((rows) => {
+    const cells = (values, tag) => values.map((v) => `<${tag}>${escapeHtml(v)}</${tag}>`).join("");
+    const htmlRows = rows
+      .map((row) => `<tr>${cells([row.train, row.type, row.corridor, row.route, row.next, row.delay, row.last], "td")}</tr>`)
+      .join("");
+    downloadFile(
+      exportFilename("xls"),
+      "application/vnd.ms-excel;charset=utf-8",
+      `﻿<!doctype html><html><head><meta charset="utf-8" /></head><body><table border="1"><thead><tr>${cells(exportHeaders(), "th")}</tr></thead><tbody>${htmlRows}</tbody></table></body></html>`,
+    );
+  }),
+);
 
 document.addEventListener("click", (event) => {
   if (!(event.target instanceof Element)) {
@@ -1639,10 +1547,6 @@ document.addEventListener("click", (event) => {
   const trigger = event.target.closest(".info-trigger");
   if (trigger) {
     const wrapper = trigger.closest(".metric-info");
-    if (!wrapper) {
-      return;
-    }
-
     const isOpen = wrapper.classList.contains("open");
     closeOpenTooltips();
     if (!isOpen) {
@@ -1667,30 +1571,16 @@ document.addEventListener("keydown", (event) => {
 });
 
 const boot = async () => {
-  if (themeSwitchEl) {
-    themeController = initThemeController({
-      selectEl: themeSwitchEl,
-    });
-    themeSwitchEl.value = themeController.getMode();
-  }
-
+  const themeController = initThemeController({ selectEl: themeSwitchEl });
+  themeSwitchEl.value = themeController.getMode();
   langSwitchEl.value = state.lang;
-  localStorage.removeItem("retrasometro_history_from");
-  localStorage.removeItem("retrasometro_history_to");
-  localStorage.removeItem("renfe_history_from");
-  localStorage.removeItem("renfe_history_to");
   applyStaticTexts();
   setStatus(t("statusLoading"));
 
-  try {
-    await refresh();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), "error");
-  }
-
+  await refresh();
 
   setInterval(() => {
-    void autoRefreshTick();
+    if (!document.hidden && !eventsConnected) void checkForPendingSync();
   }, AUTO_REFRESH_MS);
 };
 
