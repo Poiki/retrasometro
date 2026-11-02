@@ -1250,6 +1250,11 @@ h3.panel-title > svg {
     top: 12px;
     bottom: auto;
   }
+
+  .map-layout:has(.map-zone-popup) .map-zoom-controls {
+    top: auto;
+    bottom: 32px;
+  }
 }
 
 .live-grid {
