@@ -11,7 +11,7 @@ import { OpsPresetCache } from "../src/ops-cache";
 import { startServer } from "../src/server";
 import type { RunAnalytics } from "../src/analytics-worker";
 import type { NormalizedTrain } from "../src/types";
-import { calculateMapAnalytics, type MapObservation } from "../src/map-analytics";
+import { calculateMapAnalytics, calculateMapDelayZones, type MapObservation } from "../src/map-analytics";
 import { clipRailwayLine, getRailwaySegments } from "../src/railway-geometry";
 
 const dir = mkdtempSync(join(tmpdir(), "retrasometro-check-"));
@@ -83,8 +83,18 @@ try {
   const braking = ["33333", "44444", "55555"].flatMap((code) => [-3.02, -3.005, -3.004].map((lon, i) =>
     point(i * 60, { cod_comercial: code, latitud: 40.01, longitud: lon })));
   const slowdown = calculateMapAnalytics(ordered(braking), motionNow);
-  assert.equal(slowdown.zones[0]?.slowdownIntervals, 3);
-  assert.equal(slowdown.zones[0]?.delayIntervals, 0, "observed slowing is kept separate from added delay");
+  assert.equal(slowdown.zones.length, 0, "braking without added delay must never mark a black zone");
+  assert.equal(calculateMapAnalytics(ordered(recurrent.map((row) => ({ ...row, ult_retraso: 30 }))), motionNow).zones.length, 0, "passing through a cell already late does not prove delay was gained there");
+  assert.equal(calculateMapAnalytics(ordered(recurrent.map((row) => ({ ...row, ult_retraso: row.ult_retraso - 3 }))), motionNow).zones.length, 0, "losing an early margin without running late is not a delay zone");
+  const earlier = recurrent.map((row) => ({ ...row, captured_at: row.captured_at - 10 * 86400, gps_time: row.gps_time! - 10 * 86400 }));
+  const earlierAnalysis = calculateMapAnalytics(ordered(earlier), motionNow - 10 * 86400);
+  const historicalZones = calculateMapDelayZones([...earlierAnalysis.cells, ...hotspots.cells]);
+  assert.equal(historicalZones[0]?.trainCount, 4, "services on different days remain distinct in the full history");
+  assert.equal(historicalZones[0]?.gainedDelayMinutes, 12);
+  assert.equal(historicalZones[0]?.lastDelayAt, motionNow);
+  assert.equal(calculateMapDelayZones([...hotspots.cells, ...hotspots.cells])[0]?.trainCount, 2, "the same service is not counted twice across summary boundaries");
+  const boundary = calculateMapAnalytics(ordered(recurrent), motionNow, motionNow - 60);
+  assert.equal(boundary.validIntervals, 4, "context before the range preserves crossing intervals without counting earlier ones");
   const normal = Array.from({ length: 40 }, (_, i) => [point(0, { cod_comercial: `normal-${i}`, latitud: 40.01, longitud: -3.01 }), point(60, { cod_comercial: `normal-${i}`, latitud: 40.01, longitud: -3.009 })]).flat();
   assert.equal(calculateMapAnalytics(ordered([...recurrent, ...normal]), motionNow).zones.length, 0, "rare anomalies in busy cells do not establish a recurrent zone");
   assert.equal(calculateMapAnalytics(ordered(recurrent.map((row) => ({ ...row, ult_retraso: row.ult_retraso * 20 }))), motionNow).zones.length, 0, "schedule estimate corrections are not time physically lost in a minute");
@@ -93,6 +103,45 @@ try {
     for (const row of movement) movementDb.insertTrainObservations(null, row.captured_at, [{ train: { ...train, latitud: row.latitud, longitud: row.longitud, gpsTime: row.gps_time }, hash: "gps" }], "live", 0);
     assert.equal(movementDb.getMapAnalytics(motionNow).trains[0]?.averageSpeedKmh, 44.5, "indexed observation queries preserve GPS analytics");
   } finally { movementDb.close(); }
+
+  const delayDbPath = join(dir, "delays.db");
+  const delayDb = new DB(delayDbPath);
+  const delaySql = new Database(delayDbPath);
+  try {
+    const midnight = motionNow - 12 * 3600;
+    const seedDelays = (end: number, codes = ["11111", "22222"]) => {
+      for (const code of codes) for (let i = 0; i < 4; i++) {
+        const ts = end - 180 + i * 60;
+        delayDb.insertTrainObservations(null, ts, [{ train: { ...train, codComercial: code,
+          latitud: 40.41, longitud: -3.695 + i * 0.001, ultRetraso: i, gpsTime: ts }, hash: "delay" }], "live", 0);
+      }
+    };
+    seedDelays(midnight + 60);
+    seedDelays(midnight - 10 * 86400 + 60);
+    const finishHistory = () => {
+      let result = delayDb.getMapAnalytics(midnight + 120);
+      for (let i = 0; !result.history.complete && i < 5; i++) result = delayDb.getMapAnalytics(midnight + 120);
+      assert.equal(result.history.complete, true);
+      return result;
+    };
+    const delayHistory = finishHistory();
+    assert.equal(delayHistory.zones.length, 1);
+    assert.equal(delayHistory.zones[0]?.trainCount, 2);
+    assert.equal(delayHistory.history.zones[0]?.trainCount, 4, "history includes services older than the recent window without double-counting those crossing midnight");
+    assert.equal(delayHistory.history.zones[0]?.gainedDelayMinutes, 12);
+    assert.equal(delayHistory.history.zones[0]?.maxDelayMinutes, 3);
+    assert.equal(delayHistory.history.zones[0]?.lastDelayAt, midnight + 60);
+    assert.ok(delayHistory.history.zones[0]?.railSegments.length);
+    delayDb.insertTrainObservations(null, midnight + 60, [{ train: { ...train, codComercial: "11111", gpsTime: midnight + 60 }, hash: "duplicate" }], "live", 0);
+    assert.ok(delaySql.query("SELECT 1 FROM map_delay_days WHERE day_epoch=?").get(midnight), "live ingestion keeps the partial-day summary available until its next refresh");
+    assert.equal(finishHistory().history.zones[0]?.gainedDelayMinutes, 12, "recomputing historical summaries must not accumulate duplicates");
+    delayDb.archiveObservationsBefore(midnight - 86400, join(dir, "delay-archives"), 3);
+    delaySql.exec("DELETE FROM map_delay_days");
+    assert.equal(finishHistory().history.zones[0]?.gainedDelayMinutes, 12, "full history includes verified cold archives");
+    seedDelays(midnight - 10 * 86400 + 60, ["33333"]);
+    assert.equal(finishHistory().history.zones[0]?.trainCount, 5, "late observations invalidate the affected historical summary");
+    assert.equal(finishHistory().history.zones[0]?.gainedDelayMinutes, 15);
+  } finally { delaySql.close(); delayDb.close(); }
 
   db.insertSnapshot(train, old, "hash");
   db.insertTrainObservations(null, old, [{ train, hash: "hash" }], "live", 0);

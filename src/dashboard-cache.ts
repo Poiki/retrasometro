@@ -33,7 +33,7 @@ export class DashboardPresetCache {
     for (const hours of DASHBOARD_PRESET_HOURS) {
       const interval = getDisplayRefreshInterval(hours);
       const cached = await this.read(hours);
-      if (!cached || (hours === 24 && cached.mapAnalytics?.version !== 2) || currentEpoch - cached.generatedAtEpoch >= interval) {
+      if (!cached || (hours === 24 && (cached.mapAnalytics?.version !== 3 || !cached.mapAnalytics.history.complete)) || currentEpoch - cached.generatedAtEpoch >= interval) {
         await this.generate(hours, currentEpoch);
       }
     }

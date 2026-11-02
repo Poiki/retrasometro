@@ -21,14 +21,19 @@ let refreshQueued = false;
 const refresh = () => {
   if (refreshQueued) return;
   refreshQueued = true;
+  let backfillPending = false;
   queue = queue.then(async () => {
     db.runOpsMaterializationTick();
     await dashboard.refreshDue();
     await ops.refreshDue();
+    backfillPending = (await dashboard.read(24))?.mapAnalytics?.history.complete === false;
     postMessage({ type: "ready" });
   }).catch((error) => {
     console.error(`[analytics] ${error instanceof Error ? error.message : String(error)}`);
-  }).finally(() => { refreshQueued = false; });
+  }).finally(() => {
+    refreshQueued = false;
+    if (backfillPending) setTimeout(refresh, 1000);
+  });
 };
 
 

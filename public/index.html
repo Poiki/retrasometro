@@ -49,11 +49,11 @@
     <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css" />
     <link
       rel="preload"
-      href="/styles.css?v=20261102r2"
+      href="/styles.css?v=20261102r3"
       as="style"
       onload="this.onload=null;this.rel='stylesheet'"
     />
-    <noscript><link rel="stylesheet" href="/styles.css?v=20261102r2" /></noscript>
+    <noscript><link rel="stylesheet" href="/styles.css?v=20261102r3" /></noscript>
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
@@ -164,14 +164,18 @@
         </div>
         <p id="map-description" class="muted">Últimas posiciones GPS publicadas por Renfe. Comparte los filtros de trenes y se actualiza con cada ingesta.</p>
         <div class="map-insights">
-          <div><strong id="map-zones-count">—</strong><span id="map-zones-label">Zonas negras · 24 h</span></div>
-          <p id="map-analysis-status" class="muted" role="status">Preparando el análisis de las últimas 24 h…</p>
+          <div><strong id="map-zones-count">—</strong><span id="map-zones-label">Tramos con retrasos</span></div>
+          <p id="map-analysis-status" class="muted" role="status">Preparando el análisis de retrasos…</p>
         </div>
         <div class="map-toolbar">
           <label class="map-train-picker" for="map-train-select">
             <span id="map-select-label">Seleccionar tren</span>
             <select id="map-train-select" disabled><option value="">Selecciona un tren</option></select>
           </label>
+          <div class="segmented" id="map-zone-period" role="group" aria-label="Periodo de retrasos">
+            <button id="map-zone-history" class="map-period-btn active" data-map-period="history" type="button" aria-pressed="true">Histórico completo</button>
+            <button id="map-zone-recent" class="map-period-btn" data-map-period="recent" type="button" aria-pressed="false">Recientes · 24 h</button>
+          </div>
         </div>
         <div class="map-layout">
           <div id="train-map" class="train-map" role="region" aria-labelledby="map-title" aria-describedby="map-description map-zones-description" tabindex="0"></div>
@@ -192,14 +196,19 @@
           </aside>
         </div>
         <div class="map-legend" aria-label="Retraso">
-          <label class="map-zone-toggle"><input id="map-zones-visible" type="checkbox" checked /><span class="map-black-swatch" aria-hidden="true"></span><span id="map-zones-toggle-label">Zonas negras · 24 h</span></label>
+          <label class="map-zone-toggle"><input id="map-zones-visible" type="checkbox" checked /><span class="map-black-swatch" aria-hidden="true"></span><span id="map-zones-toggle-label">Tramos con retrasos</span></label>
           <span class="delay ahead">&lt; 0 min</span>
           <span class="delay ok">0 min</span>
           <span class="delay mild">1–15 min</span>
           <span class="delay medium">16–60 min</span>
           <span class="delay severe">&gt; 60 min</span>
         </div>
-        <p id="map-zones-description" class="muted">En negro se resaltan las vías en zonas donde varios servicios han acumulado retraso o reducido la velocidad de forma recurrente en las últimas 24 horas. Una ralentización también puede corresponder a una parada programada; no indica por sí sola una avería o incidencia.</p>
+        <p id="map-zones-description" class="muted">Las vías negras señalan tramos con aumentos repetidos de retraso. Cambia entre el histórico completo y las últimas 24 h; pulsa una vía para ver los servicios afectados y el retraso registrado.</p>
+        <div class="map-zone-ranking">
+          <h3 id="map-zone-ranking-title">Más problemáticos del histórico</h3>
+          <ol id="map-zone-ranking"></ol>
+          <p id="map-zone-empty" class="muted">Preparando el análisis de retrasos…</p>
+        </div>
         <p id="map-status" class="muted" role="status">Cargando...</p>
         <p id="map-tile-error" class="map-warning hidden" role="status">No se pudo cargar el mapa base. Los trenes siguen disponibles; comprueba tu conexión.</p>
       </section>
@@ -480,6 +489,6 @@
         );
       })();
     </script>
-    <script type="module" src="/app.js?v=20261102r2"></script>
+    <script type="module" src="/app.js?v=20261102r3"></script>
   </body>
 </html>

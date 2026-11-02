@@ -110,22 +110,29 @@ const I18N = {
     mapCoordinates: "Coordenadas publicadas",
     mapReceived: "Actualizado en el panel",
     mapViewTrain: "Ver tren {train} en el mapa",
-    mapZoneAverageSpeed: "Velocidad media estimada de la zona",
     mapLatestSpeed: "Velocidad del último intervalo GPS",
     mapTrainAverageSpeed: "Velocidad media del servicio · 24 h",
     mapObserved: "Minutos con muestras válidas",
     mapGainedDelay: "Minutos de retraso añadidos",
     mapAverageDelay: "Retraso medio observado",
     mapNoSpeed: "Sin muestras fiables",
-    mapZones: "Zonas negras · 24 h",
-    mapZoneTitle: "Zona de retraso / ralentización",
+    mapZones: "Tramos con retrasos",
+    mapZoneTitle: "Tramo con retrasos recurrentes",
     mapZoneTrains: "Servicios afectados",
-    mapZoneSamples: "Intervalos GPS analizados",
-    mapZoneDelay: "Intervalos con aumento de retraso",
-    mapZoneSlowdown: "Descensos de velocidad observados",
-    mapAnalysisPending: "Preparando el análisis de las últimas 24 h…",
+    mapZoneHistory: "Histórico completo",
+    mapZoneRecent: "Recientes · 24 h",
+    mapZonePeriod: "Periodo de retrasos",
+    mapZoneWorst: "Más problemáticos del histórico",
+    mapZoneLatest: "Retrasos más recientes",
+    mapZoneEmpty: "No hay tramos con retrasos recurrentes en este periodo.",
+    mapZoneLast: "Último aumento de retraso",
+    mapZonePeak: "Mayor retraso observado",
+    mapZoneAverageAdded: "Retraso añadido por servicio afectado",
+    mapZoneNear: "Cerca de {station}",
+    mapZoneBackfill: "Preparando histórico: {done}/{total} días",
+    mapAnalysisPending: "Preparando el análisis de retrasos…",
     mapAnalysisReady: "Análisis actualizado: {time}",
-    mapZonesExplanation: "En negro se resaltan las vías en zonas donde varios servicios han acumulado retraso o reducido la velocidad de forma recurrente en las últimas 24 horas. Una ralentización también puede corresponder a una parada programada; no indica por sí sola una avería o incidencia.",
+    mapZonesExplanation: "Las vías negras señalan tramos con aumentos repetidos de retraso. Cambia entre el histórico completo y las últimas 24 h; pulsa una vía para ver los servicios afectados y el retraso registrado.",
     apply: "Aplicar",
     searchPlaceholder: "Buscar por tren, corredor o estación...",
     minDelayLabel: "Min retraso",
@@ -298,22 +305,29 @@ const I18N = {
     mapCoordinates: "Published coordinates",
     mapReceived: "Updated in the dashboard",
     mapViewTrain: "Show train {train} on the map",
-    mapZoneAverageSpeed: "Estimated zone average speed",
     mapLatestSpeed: "Speed over the latest GPS interval",
     mapTrainAverageSpeed: "Service average speed · 24 h",
     mapObserved: "Minutes with valid samples",
     mapGainedDelay: "Added delay minutes",
     mapAverageDelay: "Observed average delay",
     mapNoSpeed: "No reliable samples",
-    mapZones: "Black zones · 24 h",
-    mapZoneTitle: "Delay / slowdown zone",
+    mapZones: "Sections with delays",
+    mapZoneTitle: "Recurring delay section",
     mapZoneTrains: "Affected services",
-    mapZoneSamples: "GPS intervals analysed",
-    mapZoneDelay: "Intervals with added delay",
-    mapZoneSlowdown: "Observed speed drops",
-    mapAnalysisPending: "Preparing the last 24 hours of analysis…",
+    mapZoneHistory: "Full history",
+    mapZoneRecent: "Recent · 24 h",
+    mapZonePeriod: "Delay period",
+    mapZoneWorst: "Most problematic in the full history",
+    mapZoneLatest: "Most recent delays",
+    mapZoneEmpty: "No sections with recurring delays in this period.",
+    mapZoneLast: "Latest increase in delay",
+    mapZonePeak: "Largest observed delay",
+    mapZoneAverageAdded: "Added delay per affected service",
+    mapZoneNear: "Near {station}",
+    mapZoneBackfill: "Preparing history: {done}/{total} days",
+    mapAnalysisPending: "Preparing delay analysis…",
     mapAnalysisReady: "Analysis updated: {time}",
-    mapZonesExplanation: "Black highlights railway tracks in areas where several services repeatedly gained delay or slowed down over the last 24 hours. A slowdown may also be a scheduled stop; it does not by itself indicate a fault or incident.",
+    mapZonesExplanation: "Black tracks mark sections with repeated increases in delay. Switch between the full history and the last 24 hours; select a track to see affected services and recorded delays.",
     apply: "Apply",
     searchPlaceholder: "Search by train, corridor or station...",
     minDelayLabel: "Min delay",
@@ -694,6 +708,8 @@ const applyStaticTexts = () => {
     "map-zones-label": "mapZones",
     "map-zones-description": "mapZonesExplanation",
     "map-zones-toggle-label": "mapZones",
+    "map-zone-history": "mapZoneHistory",
+    "map-zone-recent": "mapZoneRecent",
     "map-tile-error": "mapTileError",
     "min-delay-label": "minDelayLabel",
     "min-delay-unit": "minutes",
@@ -1340,34 +1356,53 @@ const trainMarkers = new Map();
 let mapVectorLayer = null;
 let mapZoneLayer = null;
 let mapAnalysisKey = null;
+let mapZonePeriod = "history";
+const visibleMapZones = () => {
+  const analysis = latestDashboard?.mapAnalytics;
+  return analysis?.version === 3 ? (mapZonePeriod === "history" ? analysis.history.zones : analysis.zones) : [];
+};
+const mapZoneName = (zone) => zone.nearbyStation ? t("mapZoneNear").replace("{station}", zone.nearbyStation) : zone.id;
+const mapZoneTime = (epoch) => new Date(epoch * 1000).toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" });
 const mapStyleUrl = () => `https://tiles.openfreemap.org/styles/${document.documentElement.dataset.theme === "dark" ? "dark" : "positron"}`;
 const updateMapTheme = () => {
   if (mapVectorLayer) mapVectorLayer.getMaplibreMap().setStyle(mapStyleUrl());
 };
 
 const renderMapAnalytics = () => {
-  const analysis = latestDashboard?.mapAnalytics?.version === 2 ? latestDashboard.mapAnalytics : null;
-  $("#map-zones-count").textContent = analysis ? numberFmt.format(analysis.zones.length) : "—";
-  $("#map-analysis-status").textContent = analysis ? t("mapAnalysisReady").replace("{time}", asTime(analysis.untilEpoch)) : t("mapAnalysisPending");
-  const key = `${analysis?.generatedAt ?? "pending"}|${state.lang}`;
+  const analysis = latestDashboard?.mapAnalytics?.version === 3 ? latestDashboard.mapAnalytics : null;
+  const zones = visibleMapZones();
+  mapFitBtnEl.disabled = trainMarkers.size === 0 && zones.length === 0;
+  $("#map-zones-count").textContent = analysis ? numberFmt.format(zones.length) : "—";
+  const range = mapZonePeriod === "history" ? analysis?.history : analysis;
+  $("#map-analysis-status").textContent = analysis ? `${asDate(range.coveredSinceEpoch ?? range.sinceEpoch)} → ${asDate(range.untilEpoch)} · ${t("mapAnalysisReady").replace("{time}", asTime(analysis.untilEpoch))}${mapZonePeriod === "history" && !analysis.history.complete ? ` · ${t("mapZoneBackfill").replace("{done}", analysis.history.processedDays).replace("{total}", analysis.history.totalDays)}` : ""}` : t("mapAnalysisPending");
+  $("#map-zone-period").setAttribute("aria-label", t("mapZonePeriod"));
+  $("#map-zone-ranking-title").textContent = t(mapZonePeriod === "history" ? "mapZoneWorst" : "mapZoneLatest");
+  for (const button of document.querySelectorAll("[data-map-period]")) {
+    const active = button.dataset.mapPeriod === mapZonePeriod;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  const key = `${analysis?.generatedAt ?? "pending"}|${state.lang}|${mapZonePeriod}`;
   if (mapAnalysisKey === key) return;
   mapAnalysisKey = key;
   const openZoneId = mapZoneLayer.getLayers().find((layer) => layer.isPopupOpen())?.options.zoneId;
   mapZoneLayer.clearLayers();
-  for (const zone of analysis?.zones ?? []) {
+  $("#map-zone-ranking").innerHTML = zones.slice(0, 5).map((zone) => `<li><button type="button" class="map-zone-link" data-map-zone="${escapeHtml(zone.id)}"><strong>${escapeHtml(mapZoneName(zone))}</strong><span>${escapeHtml(numberFmt.format(zone.trainCount))} ${escapeHtml(t("mapZoneTrains").toLowerCase())} · +${escapeHtml(numberFmt.format(zone.gainedDelayMinutes))} min</span><small>${escapeHtml(t("mapZoneLast"))}: ${escapeHtml(mapZoneTime(zone.lastDelayAt))}</small></button></li>`).join("");
+  $("#map-zone-empty").textContent = analysis ? t("mapZoneEmpty") : t("mapAnalysisPending");
+  $("#map-zone-empty").classList.toggle("hidden", zones.length > 0);
+  for (const zone of zones) {
     const L = window.L;
     if (!zone.railSegments?.length) continue;
     L.polyline(zone.railSegments, { color: "#fff", weight: 6, opacity: 0.8, smoothFactor: 0, interactive: false }).addTo(mapZoneLayer);
     const area = L.polyline(zone.railSegments, { color: "#09090b", weight: 3, opacity: 1, smoothFactor: 0, zoneId: zone.id });
     const fields = [
       [t("mapZoneTrains"), numberFmt.format(zone.trainCount)],
-      [t("mapZoneSamples"), numberFmt.format(zone.samples)],
-      [t("mapZoneDelay"), numberFmt.format(zone.delayIntervals)],
-      [t("mapZoneSlowdown"), numberFmt.format(zone.slowdownIntervals)],
       [t("mapGainedDelay"), numberFmt.format(zone.gainedDelayMinutes)],
-      [t("mapZoneAverageSpeed"), `${numberFmt.format(zone.averageSpeedKmh)} km/h`],
+      [t("mapZoneAverageAdded"), `${numberFmt.format(zone.averageAddedDelayMinutes)} min`],
+      [t("mapZonePeak"), `${numberFmt.format(zone.maxDelayMinutes)} min`],
+      [t("mapZoneLast"), mapZoneTime(zone.lastDelayAt)],
     ];
-    area.bindPopup(`<strong>${escapeHtml(t("mapZoneTitle"))}</strong><p class="map-zone-explanation">${escapeHtml(t("mapZonesExplanation"))}</p><dl class="map-zone-fields">${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`, { className: "map-zone-popup", maxWidth: 300 });
+    area.bindPopup(`<strong>${escapeHtml(t("mapZoneTitle"))}</strong><p class="map-zone-explanation">${escapeHtml(mapZoneName(zone))}</p><dl class="map-zone-fields">${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`, { className: "map-zone-popup", maxWidth: 300 });
     area.on("click", () => selectMapTrain(""));
     area.on("add", () => {
       const element = area.getElement();
@@ -1470,7 +1505,7 @@ const selectMapTrain = (id, closeUp = false) => {
 const fitTrainMap = () => {
   if (!trainMap) return;
   const points = [...trainMarkers.values()].map((marker) => marker.getLatLng());
-  if ($("#map-zones-visible").checked) for (const zone of latestDashboard?.mapAnalytics?.zones ?? []) points.push(...zone.bounds);
+  if ($("#map-zones-visible").checked) for (const zone of visibleMapZones()) points.push(...zone.bounds);
   if (points.length === 0) return;
   trainMap.fitBounds(points, {
     padding: [24, 24], maxZoom: 8, animate: false,
@@ -1542,8 +1577,8 @@ const renderTrainMap = (items, ingestor) => {
       .map((train) => `<option value="${escapeHtml(train.cod_comercial)}">${escapeHtml(train.cod_comercial)} · ${escapeHtml(train.product_name)} · ${escapeHtml(delayLabel(train.ult_retraso))}</option>`).join("");
   mapTrainSelectEl.disabled = valid.length === 0;
   renderMapTrainDetail();
-  mapFitBtnEl.disabled = trainMarkers.size === 0 && !latestDashboard?.mapAnalytics?.zones.length;
-  if (!mapHasFitted && latestDashboard?.mapAnalytics && (trainMarkers.size > 0 || latestDashboard.mapAnalytics.zones.length > 0)) {
+  mapFitBtnEl.disabled = trainMarkers.size === 0 && visibleMapZones().length === 0;
+  if (!mapHasFitted && latestDashboard?.mapAnalytics && (trainMarkers.size > 0 || visibleMapZones().length > 0)) {
     fitTrainMap();
     mapHasFitted = true;
   }
@@ -1555,6 +1590,24 @@ mapFitBtnEl.addEventListener("click", fitTrainMap);
 mapZoomInEl.addEventListener("click", () => trainMap?.zoomIn());
 mapZoomOutEl.addEventListener("click", () => trainMap?.zoomOut());
 mapTrainSelectEl.addEventListener("change", () => selectMapTrain(mapTrainSelectEl.value, true));
+$("#map-zone-period").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-map-period]");
+  if (!button) return;
+  mapZonePeriod = button.dataset.mapPeriod;
+  if (trainMap) renderMapAnalytics();
+});
+$("#map-zone-ranking").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-map-zone]");
+  if (!button || !trainMap) return;
+  const zone = visibleMapZones().find((item) => item.id === button.dataset.mapZone);
+  if (!zone) return;
+  selectMapTrain("");
+  $("#map-zones-visible").checked = true;
+  mapZoneLayer.addTo(trainMap);
+  trainMap.fitBounds(zone.bounds, { padding: [32, 32], maxZoom: 13, animate: false });
+  mapZoneLayer.getLayers().find((layer) => layer.options.zoneId === zone.id)?.openPopup();
+  $("#train-map").scrollIntoView({ block: "center" });
+});
 $("#map-zones-visible").addEventListener("change", (event) => {
   if (!trainMap) return;
   if (event.target.checked) mapZoneLayer.addTo(trainMap);

@@ -933,7 +933,47 @@ h3.panel-title > svg {
 .map-zone-fields dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  max-width: 50%;
+  text-align: right;
 }
+
+.map-zone-ranking ol {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 0 20px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: delay-rank;
+}
+
+.map-zone-link {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 4px 8px;
+  width: 100%;
+  min-height: 96px;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--cds-border-subtle);
+  background: transparent;
+  color: var(--cds-text-primary);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.map-zone-link::before {
+  counter-increment: delay-rank;
+  content: counter(delay-rank, decimal-leading-zero);
+  color: var(--cds-text-helper);
+  font-variant-numeric: tabular-nums;
+}
+
+.map-zone-link:hover strong { color: var(--cds-link-primary); }
+.map-zone-link strong { font-size: 0.875rem; }
+.map-zone-link span, .map-zone-link small { grid-column: 2; color: var(--cds-text-secondary); font-size: 0.8125rem; }
 
 .map-train-picker {
   display: grid;
@@ -1233,7 +1273,8 @@ h3.panel-title > svg {
   gap: 2px;
 }
 
-.history-btn {
+.history-btn,
+.map-period-btn {
   min-height: 32px;
   min-width: 58px;
   border: 0;
@@ -1247,11 +1288,13 @@ h3.panel-title > svg {
   cursor: pointer;
 }
 
-.history-btn:hover {
+.history-btn:hover,
+.map-period-btn:hover {
   color: var(--cds-text-primary);
 }
 
-.history-btn.active {
+.history-btn.active,
+.map-period-btn.active {
   background: var(--cds-link-primary);
   color: #ffffff;
 }

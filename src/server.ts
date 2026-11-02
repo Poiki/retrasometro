@@ -522,8 +522,8 @@ const handleApi = async (
             protected: true,
             description:
               lang === "es"
-                ? "Métricas principales, histórico, mapTrains sin paginación y mapAnalytics con velocidades GPS estimadas y zonas de las últimas 24 h."
-                : "Dashboard metrics, history, unpaginated mapTrains and mapAnalytics with estimated GPS speeds and zones from the last 24 h.",
+                ? "Métricas principales, histórico, mapTrains sin paginación y mapAnalytics con velocidades GPS estimadas y tramos de retrasos recientes e históricos."
+                : "Dashboard metrics, history, unpaginated mapTrains and mapAnalytics with estimated GPS speeds and recent and historical delay sections.",
             query: [
               {
                 name: "historyHours",

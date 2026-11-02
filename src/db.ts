@@ -23,7 +23,7 @@ import type {
   StationRecord,
 } from "./types";
 import { getProductName } from "./products";
-import { calculateMapAnalytics, type MapObservation } from "./map-analytics";
+import { calculateMapAnalytics, calculateMapDelayZones, type MapDelayCell, type MapObservation } from "./map-analytics";
 import { getRailwaySegments } from "./railway-geometry";
 import {
   buildCorridorDirectionKey,
@@ -31,6 +31,7 @@ import {
   clampNumber,
   getDelayBucketFlags,
   getOperationalDayMadrid,
+  haversineKm,
 } from "./utils";
 
 interface UpsertCurrentArgs {
@@ -243,6 +244,12 @@ export class DB {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS map_delay_days (
+        day_epoch INTEGER PRIMARY KEY,
+        through_epoch INTEGER NOT NULL,
+        cells_json TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS ingestion_runs (
@@ -1757,6 +1764,11 @@ export class DB {
           isEstimated,
         );
       }
+      if (rows.length && !isEstimated && ["live", "live_repeated_provider_ts"].includes(source)) {
+        // A late insertion can also change an interval ending just after midnight.
+        this.db.query(`DELETE FROM map_delay_days WHERE day_epoch BETWEEN ? AND ? AND through_epoch >= day_epoch + 86399`)
+          .run(Math.floor(capturedAt / 86400) * 86400, Math.floor((capturedAt + 180) / 86400) * 86400);
+      }
     });
 
     run(items);
@@ -2841,19 +2853,71 @@ export class DB {
     return row?.total ?? 0;
   }
 
-  getMapAnalytics(untilEpoch = Math.floor(Date.now() / 1000)) {
-    const since = untilEpoch - 86400;
-    this.loadObservationArchives(since, untilEpoch);
+  private calculateMapRange(since: number, untilEpoch: number) {
+    this.loadObservationArchives(since - 180, untilEpoch);
     const rows = this.db.query(`
       SELECT cod_comercial, cod_product, cod_origen, cod_destino, captured_at, gps_time,
         latitud, longitud, ult_retraso, source, is_estimated
       FROM observation_detail WHERE captured_at >= ? AND captured_at <= ?
       ORDER BY captured_at ASC, id ASC
-    `).iterate(since, untilEpoch) as Iterable<MapObservation>;
-    const analysis = calculateMapAnalytics(rows, untilEpoch);
-    return { ...analysis, version: 2,
-      zones: analysis.zones.map((zone) => ({ ...zone, railSegments: getRailwaySegments(zone.bounds) }))
-        .filter((zone) => zone.railSegments.length > 0),
+    `).iterate(since - 180, untilEpoch) as Iterable<MapObservation>;
+    return calculateMapAnalytics(rows, untilEpoch, since);
+  }
+
+  getMapAnalytics(untilEpoch = Math.floor(Date.now() / 1000)) {
+    const { cells, zones, ...analysis } = this.calculateMapRange(untilEpoch - 86400, untilEpoch);
+    const oldest = this.db.query(`SELECT MIN(ts) AS ts FROM (
+      SELECT captured_at AS ts FROM (SELECT captured_at FROM train_observations WHERE captured_at <= ? ORDER BY captured_at LIMIT 1)
+      UNION ALL SELECT MIN(from_ts) FROM observation_archive_chunks WHERE from_ts <= ?
+      UNION ALL SELECT MIN(day_epoch) FROM map_delay_days WHERE day_epoch <= ?
+    )`).get(untilEpoch, untilEpoch, untilEpoch) as { ts: number | null };
+    const sinceEpoch = oldest.ts ?? untilEpoch;
+    const firstDay = Math.floor(sinceEpoch / 86400) * 86400;
+    const today = Math.floor(untilEpoch / 86400) * 86400;
+    const saved = this.db.query(`SELECT day_epoch, through_epoch FROM map_delay_days WHERE day_epoch <= ?`).all(today) as Array<{ day_epoch: number; through_epoch: number }>;
+    const completed = new Set(saved.filter((day) => day.through_epoch >= day.day_epoch + 86399).map((day) => day.day_epoch));
+    const pending: number[] = [];
+    for (let day = today - 86400; day >= firstDay; day -= 86400) if (!completed.has(day)) pending.push(day);
+    const save = this.db.query(`INSERT OR REPLACE INTO map_delay_days (day_epoch, through_epoch, cells_json) VALUES (?, ?, ?)`);
+    // Backfill in bounded batches so live analytics can run between historical days.
+    for (const day of [today, ...pending.slice(0, 7)]) {
+      const through = Math.min(day + 86399, untilEpoch);
+      const daily = this.calculateMapRange(day, through);
+      save.run(day, through, JSON.stringify(daily.cells));
+      if (day < today) completed.add(day);
+    }
+    const summaries = this.db.query(`SELECT cells_json FROM map_delay_days WHERE day_epoch BETWEEN ? AND ? ORDER BY day_epoch`)
+      .iterate(firstDay, today) as Iterable<{ cells_json: string }>;
+    const historicalZones = calculateMapDelayZones((function* () {
+      for (const summary of summaries) yield* JSON.parse(summary.cells_json) as MapDelayCell[];
+    })());
+    const stations = this.db.query(`SELECT name, lat, lon FROM stations WHERE name IS NOT NULL AND lat IS NOT NULL AND lon IS NOT NULL`)
+      .all() as Array<{ name: string; lat: number; lon: number }>;
+    const geography = new Map<string, { railSegments: number[][][]; nearbyStation: string | null }>();
+    const withTracks = (items: typeof zones) => items.map((zone) => {
+      let location = geography.get(zone.id);
+      if (!location) {
+        const lat = (zone.bounds[0]![0]! + zone.bounds[1]![0]!) / 2;
+        const lon = (zone.bounds[0]![1]! + zone.bounds[1]![1]!) / 2;
+        let nearbyStation: string | null = null;
+        let nearestKm = 20;
+        for (const station of stations) {
+          if (Math.abs(station.lat - lat) > 0.2 || Math.abs(station.lon - lon) > 0.3) continue;
+          const distance = haversineKm(lat, lon, station.lat, station.lon);
+          if (distance < nearestKm) { nearestKm = distance; nearbyStation = station.name; }
+        }
+        location = { railSegments: getRailwaySegments(zone.bounds), nearbyStation };
+        geography.set(zone.id, location);
+      }
+      return { ...zone, ...location };
+    }).filter((zone) => zone.railSegments.length > 0);
+    const totalDays = Math.round((today - firstDay) / 86400) + 1;
+    return { ...analysis, version: 3,
+      zones: withTracks(zones).sort((a, b) => (b.lastDelayAt ?? 0) - (a.lastDelayAt ?? 0) || b.gainedDelayMinutes - a.gainedDelayMinutes),
+      history: { sinceEpoch, untilEpoch, complete: pending.length <= 7,
+        processedDays: completed.size + 1, totalDays,
+        coveredSinceEpoch: pending.length > 7 ? pending[7]! + 86400 : sinceEpoch,
+        zones: withTracks(historicalZones) },
     };
   }
 
