@@ -1,0 +1,2 @@
+# Preserve verified upstream distributions, including their original line endings.
+public/vendor/** -text -whitespace

@@ -45,13 +45,15 @@
       type="font/woff2"
       crossorigin
     />
+    <link rel="stylesheet" href="/vendor/leaflet-1.9.4/leaflet.css" />
+    <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css" />
     <link
       rel="preload"
-      href="/styles.css?v=20261021r1"
+      href="/styles.css?v=20261102r2"
       as="style"
       onload="this.onload=null;this.rel='stylesheet'"
     />
-    <noscript><link rel="stylesheet" href="/styles.css?v=20261021r1" /></noscript>
+    <noscript><link rel="stylesheet" href="/styles.css?v=20261102r2" /></noscript>
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
@@ -90,6 +92,7 @@
         </a>
         <nav class="topnav" aria-label="Principal">
           <a class="active" href="#top"><svg><use href="#i-home" /></svg><span id="nav-home">Inicio</span></a>
+          <a href="#mapa"><svg><use href="#i-globe" /></svg><span id="nav-map">Mapa</span></a>
           <a href="#trenes"><svg><use href="#i-train" /></svg><span id="nav-trains">Trenes</span></a>
           <a href="#estadisticas"><svg><use href="#i-bar" /></svg><span id="nav-stats">Estadísticas</span></a>
           <a href="/api-docs.html"><svg><use href="#i-code" /></svg><span id="nav-api">API</span></a>
@@ -152,6 +155,53 @@
         <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
         <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
         <article class="card skeleton-card"><div class="label"></div><div class="value"></div></article>
+      </section>
+
+      <section class="panel map-panel" id="mapa" aria-labelledby="map-title">
+        <div class="panel-header wrap">
+          <h2 class="panel-title"><svg><use href="#i-globe" /></svg><span id="map-title">Mapa en tiempo real</span></h2>
+          <button id="map-fit" class="btn ghost" type="button" disabled>Ver la red</button>
+        </div>
+        <p id="map-description" class="muted">Últimas posiciones GPS publicadas por Renfe. Comparte los filtros de trenes y se actualiza con cada ingesta.</p>
+        <div class="map-insights">
+          <div><strong id="map-zones-count">—</strong><span id="map-zones-label">Zonas negras · 24 h</span></div>
+          <p id="map-analysis-status" class="muted" role="status">Preparando el análisis de las últimas 24 h…</p>
+        </div>
+        <div class="map-toolbar">
+          <label class="map-train-picker" for="map-train-select">
+            <span id="map-select-label">Seleccionar tren</span>
+            <select id="map-train-select" disabled><option value="">Selecciona un tren</option></select>
+          </label>
+        </div>
+        <div class="map-layout">
+          <div id="train-map" class="train-map" role="region" aria-labelledby="map-title" aria-describedby="map-description map-zones-description" tabindex="0"></div>
+          <div class="map-zoom-controls" role="group" aria-label="Zoom">
+            <button id="map-zoom-in" class="map-zoom-btn" type="button" aria-label="Acercar" title="Acercar" disabled>+</button>
+            <button id="map-zoom-out" class="map-zoom-btn" type="button" aria-label="Alejar" title="Alejar" disabled>−</button>
+          </div>
+          <aside class="map-train-detail hidden" aria-labelledby="map-detail-heading">
+            <div class="map-detail-header">
+              <h3 id="map-detail-heading" aria-live="polite">Información del tren</h3>
+              <button id="map-detail-close" class="map-card-close" type="button" aria-label="Cerrar ficha" title="Cerrar ficha">×</button>
+            </div>
+            <div id="map-detail-content"></div>
+            <div class="map-detail-actions">
+              <button id="map-locate-train" class="btn primary" type="button">Centrar tren</button>
+              <a id="map-location-link" class="btn ghost" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>
+            </div>
+          </aside>
+        </div>
+        <div class="map-legend" aria-label="Retraso">
+          <label class="map-zone-toggle"><input id="map-zones-visible" type="checkbox" checked /><span class="map-black-swatch" aria-hidden="true"></span><span id="map-zones-toggle-label">Zonas negras · 24 h</span></label>
+          <span class="delay ahead">&lt; 0 min</span>
+          <span class="delay ok">0 min</span>
+          <span class="delay mild">1–15 min</span>
+          <span class="delay medium">16–60 min</span>
+          <span class="delay severe">&gt; 60 min</span>
+        </div>
+        <p id="map-zones-description" class="muted">En negro se resaltan las vías en zonas donde varios servicios han acumulado retraso o reducido la velocidad de forma recurrente en las últimas 24 horas. Una ralentización también puede corresponder a una parada programada; no indica por sí sola una avería o incidencia.</p>
+        <p id="map-status" class="muted" role="status">Cargando...</p>
+        <p id="map-tile-error" class="map-warning hidden" role="status">No se pudo cargar el mapa base. Los trenes siguen disponibles; comprueba tu conexión.</p>
       </section>
 
       <section class="panel trains-panel" id="trenes">
@@ -430,6 +480,6 @@
         );
       })();
     </script>
-    <script type="module" src="/app.js?v=20261021r1"></script>
+    <script type="module" src="/app.js?v=20261102r2"></script>
   </body>
 </html>

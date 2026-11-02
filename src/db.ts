@@ -23,6 +23,8 @@ import type {
   StationRecord,
 } from "./types";
 import { getProductName } from "./products";
+import { calculateMapAnalytics, type MapObservation } from "./map-analytics";
+import { getRailwaySegments } from "./railway-geometry";
 import {
   buildCorridorDirectionKey,
   buildServiceInstanceId,
@@ -2837,6 +2839,22 @@ export class DB {
       .get(pattern, minDelay) as { total: number } | undefined;
 
     return row?.total ?? 0;
+  }
+
+  getMapAnalytics(untilEpoch = Math.floor(Date.now() / 1000)) {
+    const since = untilEpoch - 86400;
+    this.loadObservationArchives(since, untilEpoch);
+    const rows = this.db.query(`
+      SELECT cod_comercial, cod_product, cod_origen, cod_destino, captured_at, gps_time,
+        latitud, longitud, ult_retraso, source, is_estimated
+      FROM observation_detail WHERE captured_at >= ? AND captured_at <= ?
+      ORDER BY captured_at ASC, id ASC
+    `).iterate(since, untilEpoch) as Iterable<MapObservation>;
+    const analysis = calculateMapAnalytics(rows, untilEpoch);
+    return { ...analysis, version: 2,
+      zones: analysis.zones.map((zone) => ({ ...zone, railSegments: getRailwaySegments(zone.bounds) }))
+        .filter((zone) => zone.railSegments.length > 0),
+    };
   }
 
   getTrainHistory(codComercial: string, hours: number) {

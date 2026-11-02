@@ -15,6 +15,7 @@ export interface DashboardHistoricalCacheEntry {
   generatedAtEpoch: number;
   historical: HistoricalPayload;
   corridorMeta?: CorridorMetaPayload;
+  mapAnalytics?: ReturnType<DB["getMapAnalytics"]>;
 }
 
 const nowEpoch = () => Math.floor(Date.now() / 1000);
@@ -32,7 +33,7 @@ export class DashboardPresetCache {
     for (const hours of DASHBOARD_PRESET_HOURS) {
       const interval = getDisplayRefreshInterval(hours);
       const cached = await this.read(hours);
-      if (!cached || currentEpoch - cached.generatedAtEpoch >= interval) {
+      if (!cached || (hours === 24 && cached.mapAnalytics?.version !== 2) || currentEpoch - cached.generatedAtEpoch >= interval) {
         await this.generate(hours, currentEpoch);
       }
     }
@@ -54,6 +55,7 @@ export class DashboardPresetCache {
       generatedAtEpoch,
       historical,
       corridorMeta,
+      ...(hours === 24 ? { mapAnalytics: this.db.getMapAnalytics(generatedAtEpoch) } : {}),
     };
 
     const filePath = this.getFilePath(hours);

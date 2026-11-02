@@ -1,4 +1,7 @@
 import { initThemeController } from "./theme.js";
+import "./vendor/leaflet-1.9.4/leaflet.js";
+import "./vendor/maplibre/maplibre-gl.js";
+import "./vendor/maplibre/leaflet-maplibre-gl.js";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -8,6 +11,15 @@ const productsEl = $("#products");
 const corridorsEl = $("#corridors");
 const todayMetricsEl = $("#today-metrics");
 const trainsBodyEl = $("#trains-body");
+const mapStatusEl = $("#map-status");
+const mapTileErrorEl = $("#map-tile-error");
+const mapFitBtnEl = $("#map-fit");
+const mapTrainSelectEl = $("#map-train-select");
+const mapZoomInEl = $("#map-zoom-in");
+const mapZoomOutEl = $("#map-zoom-out");
+const mapTrainDetailEl = $(".map-train-detail");
+const mapDetailContentEl = $("#map-detail-content");
+const mapLocationLinkEl = $("#map-location-link");
 const corridorsSearchInputEl = $("#corridors-search");
 const historicalProductsSearchInputEl = $("#historical-products-search");
 const accountabilityRoutesSearchInputEl = $("#accountability-routes-search");
@@ -49,6 +61,7 @@ const I18N = {
     title: "Retrasos ferroviarios en tiempo real",
     subtitle: "Monitoriza la puntualidad de los trenes en toda la red ferroviaria de España",
     navHome: "Inicio",
+    navMap: "Mapa",
     navTrains: "Trenes",
     navStats: "Estadísticas",
     navApi: "API",
@@ -79,6 +92,40 @@ const I18N = {
     historyApplyRange: "Aplicar rango",
     historyClearRange: "Limpiar",
     trainsTitle: "Trenes activos",
+    mapTitle: "Mapa en tiempo real",
+    mapDescription: "Últimas posiciones GPS publicadas por Renfe. Comparte los filtros de trenes y se actualiza con cada ingesta.",
+    mapFit: "Ver la red",
+    mapCount: "{shown} de {total} trenes con posición válida",
+    mapEmpty: "No hay posiciones GPS válidas para los filtros actuales.",
+    mapStale: "Sin datos recientes. Se conservan las últimas posiciones conocidas.",
+    mapTileError: "No se pudo cargar el mapa base. Los trenes siguen disponibles; comprueba tu conexión.",
+    mapZoomIn: "Acercar",
+    mapZoomOut: "Alejar",
+    mapGps: "Señal GPS",
+    mapSelect: "Seleccionar tren",
+    mapSelectPlaceholder: "Selecciona un tren",
+    mapClose: "Cerrar ficha",
+    mapLocate: "Centrar tren",
+    mapOpenLocation: "OpenStreetMap",
+    mapCoordinates: "Coordenadas publicadas",
+    mapReceived: "Actualizado en el panel",
+    mapViewTrain: "Ver tren {train} en el mapa",
+    mapZoneAverageSpeed: "Velocidad media estimada de la zona",
+    mapLatestSpeed: "Velocidad del último intervalo GPS",
+    mapTrainAverageSpeed: "Velocidad media del servicio · 24 h",
+    mapObserved: "Minutos con muestras válidas",
+    mapGainedDelay: "Minutos de retraso añadidos",
+    mapAverageDelay: "Retraso medio observado",
+    mapNoSpeed: "Sin muestras fiables",
+    mapZones: "Zonas negras · 24 h",
+    mapZoneTitle: "Zona de retraso / ralentización",
+    mapZoneTrains: "Servicios afectados",
+    mapZoneSamples: "Intervalos GPS analizados",
+    mapZoneDelay: "Intervalos con aumento de retraso",
+    mapZoneSlowdown: "Descensos de velocidad observados",
+    mapAnalysisPending: "Preparando el análisis de las últimas 24 h…",
+    mapAnalysisReady: "Análisis actualizado: {time}",
+    mapZonesExplanation: "En negro se resaltan las vías en zonas donde varios servicios han acumulado retraso o reducido la velocidad de forma recurrente en las últimas 24 horas. Una ralentización también puede corresponder a una parada programada; no indica por sí sola una avería o incidencia.",
     apply: "Aplicar",
     searchPlaceholder: "Buscar por tren, corredor o estación...",
     minDelayLabel: "Min retraso",
@@ -202,6 +249,7 @@ const I18N = {
     title: "Real-time rail delays",
     subtitle: "Track train punctuality across the whole Spanish rail network",
     navHome: "Home",
+    navMap: "Map",
     navTrains: "Trains",
     navStats: "Statistics",
     navApi: "API",
@@ -232,6 +280,40 @@ const I18N = {
     historyApplyRange: "Apply range",
     historyClearRange: "Clear",
     trainsTitle: "Active trains",
+    mapTitle: "Live map",
+    mapDescription: "Latest GPS positions published by Renfe. Uses the train filters and updates after each ingestion.",
+    mapFit: "Show network",
+    mapCount: "{shown} of {total} trains with valid positions",
+    mapEmpty: "No valid GPS positions match the current filters.",
+    mapStale: "No recent data. Showing the last known positions.",
+    mapTileError: "Could not load the base map. Trains are still available; check your connection.",
+    mapZoomIn: "Zoom in",
+    mapZoomOut: "Zoom out",
+    mapGps: "GPS signal",
+    mapSelect: "Select train",
+    mapSelectPlaceholder: "Choose a train",
+    mapClose: "Close card",
+    mapLocate: "Center train",
+    mapOpenLocation: "OpenStreetMap",
+    mapCoordinates: "Published coordinates",
+    mapReceived: "Updated in the dashboard",
+    mapViewTrain: "Show train {train} on the map",
+    mapZoneAverageSpeed: "Estimated zone average speed",
+    mapLatestSpeed: "Speed over the latest GPS interval",
+    mapTrainAverageSpeed: "Service average speed · 24 h",
+    mapObserved: "Minutes with valid samples",
+    mapGainedDelay: "Added delay minutes",
+    mapAverageDelay: "Observed average delay",
+    mapNoSpeed: "No reliable samples",
+    mapZones: "Black zones · 24 h",
+    mapZoneTitle: "Delay / slowdown zone",
+    mapZoneTrains: "Affected services",
+    mapZoneSamples: "GPS intervals analysed",
+    mapZoneDelay: "Intervals with added delay",
+    mapZoneSlowdown: "Observed speed drops",
+    mapAnalysisPending: "Preparing the last 24 hours of analysis…",
+    mapAnalysisReady: "Analysis updated: {time}",
+    mapZonesExplanation: "Black highlights railway tracks in areas where several services repeatedly gained delay or slowed down over the last 24 hours. A slowdown may also be a scheduled stop; it does not by itself indicate a fault or incident.",
     apply: "Apply",
     searchPlaceholder: "Search by train, corridor or station...",
     minDelayLabel: "Min delay",
@@ -574,6 +656,7 @@ const applyStaticTexts = () => {
     "title-text": "title",
     "subtitle-text": "subtitle",
     "nav-home": "navHome",
+    "nav-map": "navMap",
     "nav-trains": "navTrains",
     "nav-stats": "navStats",
     "nav-api": "navApi",
@@ -602,6 +685,16 @@ const applyStaticTexts = () => {
     "history-range-apply": "historyApplyRange",
     "history-range-clear": "historyClearRange",
     "trains-title": "trainsTitle",
+    "map-title": "mapTitle",
+    "map-description": "mapDescription",
+    "map-fit": "mapFit",
+    "map-select-label": "mapSelect",
+    "map-locate-train": "mapLocate",
+    "map-location-link": "mapOpenLocation",
+    "map-zones-label": "mapZones",
+    "map-zones-description": "mapZonesExplanation",
+    "map-zones-toggle-label": "mapZones",
+    "map-tile-error": "mapTileError",
     "min-delay-label": "minDelayLabel",
     "min-delay-unit": "minutes",
     "apply-btn": "apply",
@@ -641,6 +734,11 @@ const applyStaticTexts = () => {
   historicalProductsSearchInputEl.placeholder = t("historicalProductsSearchPlaceholder");
   accountabilityRoutesSearchInputEl.placeholder = t("accountabilityRoutesSearchPlaceholder");
   accountabilityTrainsSearchInputEl.placeholder = t("accountabilityTrainsSearchPlaceholder");
+  $(".map-legend").setAttribute("aria-label", t("thDelay"));
+  for (const [control, key] of [[mapZoomInEl, "mapZoomIn"], [mapZoomOutEl, "mapZoomOut"], [$("#map-detail-close"), "mapClose"]]) {
+    control.title = t(key);
+    control.setAttribute("aria-label", t(key));
+  }
 
   if (!latestDashboard) {
     setStatus(t("statusLoading"));
@@ -1222,7 +1320,7 @@ const renderTrains = (data) => {
       const delay = Number(train.ult_retraso ?? 0);
       return `
         <tr>
-          <td><strong>${escapeHtml(train.cod_comercial)}</strong></td>
+          <td><button class="train-map-link" type="button" data-map-train="${escapeHtml(train.cod_comercial)}" aria-label="${escapeHtml(t("mapViewTrain").replace("{train}", train.cod_comercial))}" ${isValidMapPosition(train) ? "" : "disabled"}>${escapeHtml(train.cod_comercial)}</button></td>
           <td>${escapeHtml(train.product_name)}</td>
           <td>${escapeHtml(train.des_corridor || "-")}</td>
           <td>${escapeHtml(stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino))}</td>
@@ -1234,6 +1332,259 @@ const renderTrains = (data) => {
     })
     .join("");
 };
+
+let trainMap = null;
+let mapHasFitted = false;
+let selectedMapTrainId = null;
+const trainMarkers = new Map();
+let mapVectorLayer = null;
+let mapZoneLayer = null;
+let mapAnalysisKey = null;
+const mapStyleUrl = () => `https://tiles.openfreemap.org/styles/${document.documentElement.dataset.theme === "dark" ? "dark" : "positron"}`;
+const updateMapTheme = () => {
+  if (mapVectorLayer) mapVectorLayer.getMaplibreMap().setStyle(mapStyleUrl());
+};
+
+const renderMapAnalytics = () => {
+  const analysis = latestDashboard?.mapAnalytics?.version === 2 ? latestDashboard.mapAnalytics : null;
+  $("#map-zones-count").textContent = analysis ? numberFmt.format(analysis.zones.length) : "—";
+  $("#map-analysis-status").textContent = analysis ? t("mapAnalysisReady").replace("{time}", asTime(analysis.untilEpoch)) : t("mapAnalysisPending");
+  const key = `${analysis?.generatedAt ?? "pending"}|${state.lang}`;
+  if (mapAnalysisKey === key) return;
+  mapAnalysisKey = key;
+  const openZoneId = mapZoneLayer.getLayers().find((layer) => layer.isPopupOpen())?.options.zoneId;
+  mapZoneLayer.clearLayers();
+  for (const zone of analysis?.zones ?? []) {
+    const L = window.L;
+    if (!zone.railSegments?.length) continue;
+    L.polyline(zone.railSegments, { color: "#fff", weight: 6, opacity: 0.8, smoothFactor: 0, interactive: false }).addTo(mapZoneLayer);
+    const area = L.polyline(zone.railSegments, { color: "#09090b", weight: 3, opacity: 1, smoothFactor: 0, zoneId: zone.id });
+    const fields = [
+      [t("mapZoneTrains"), numberFmt.format(zone.trainCount)],
+      [t("mapZoneSamples"), numberFmt.format(zone.samples)],
+      [t("mapZoneDelay"), numberFmt.format(zone.delayIntervals)],
+      [t("mapZoneSlowdown"), numberFmt.format(zone.slowdownIntervals)],
+      [t("mapGainedDelay"), numberFmt.format(zone.gainedDelayMinutes)],
+      [t("mapZoneAverageSpeed"), `${numberFmt.format(zone.averageSpeedKmh)} km/h`],
+    ];
+    area.bindPopup(`<strong>${escapeHtml(t("mapZoneTitle"))}</strong><p class="map-zone-explanation">${escapeHtml(t("mapZonesExplanation"))}</p><dl class="map-zone-fields">${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`, { className: "map-zone-popup", maxWidth: 300 });
+    area.on("click", () => selectMapTrain(""));
+    area.on("add", () => {
+      const element = area.getElement();
+      element.classList.add("map-black-zone");
+      element.setAttribute("tabindex", "0");
+      element.setAttribute("role", "button");
+      element.setAttribute("aria-label", `${t("mapZoneTitle")} · ${zone.trainCount} ${t("mapZoneTrains")}`);
+      element.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectMapTrain("");
+          area.openPopup();
+        }
+      });
+    }).addTo(mapZoneLayer);
+    if (openZoneId === zone.id) area.openPopup();
+  }
+};
+
+const isValidMapPosition = (train) =>
+  Number.isFinite(train.latitud) && Number.isFinite(train.longitud) &&
+  Math.abs(train.latitud) <= 85.05112878 && Math.abs(train.longitud) <= 180 &&
+  (train.latitud !== 0 || train.longitud !== 0);
+
+const updateMapZoom = () => {
+  const zoom = trainMap.getZoom();
+  mapZoomInEl.disabled = zoom >= trainMap.getMaxZoom();
+  mapZoomOutEl.disabled = zoom <= trainMap.getMinZoom();
+  $("#train-map").classList.toggle("map-overview", zoom < 9);
+};
+
+const renderMapTrainDetail = () => {
+  const train = latestDashboard?.mapTrains?.find((item) => item.cod_comercial === selectedMapTrainId);
+  const selected = Boolean(train && trainMarkers.has(selectedMapTrainId));
+  if (!selected) selectedMapTrainId = null;
+  mapTrainSelectEl.value = selectedMapTrainId ?? "";
+  if (!selected && mapTrainDetailEl.contains(document.activeElement)) {
+    (mapTrainSelectEl.disabled ? $("#train-map") : mapTrainSelectEl).focus({ preventScroll: true });
+  }
+  mapTrainDetailEl.classList.toggle("hidden", !selected);
+  for (const [id, marker] of trainMarkers) {
+    marker.getElement().classList.toggle("selected", id === selectedMapTrainId);
+    marker.getElement().setAttribute("aria-pressed", String(id === selectedMapTrainId));
+    marker.setZIndexOffset(id === selectedMapTrainId ? 1000 : 0);
+  }
+  if (!selected) {
+    mapDetailContentEl.replaceChildren();
+    mapLocationLinkEl.removeAttribute("href");
+    return;
+  }
+  $("#map-detail-heading").textContent = `${train.product_name} · ${train.cod_comercial}`;
+  const motion = latestDashboard?.mapAnalytics?.trains.find((item) =>
+    item.codComercial === train.cod_comercial && item.codProduct === train.cod_product &&
+    item.codOrigen === train.cod_origen && item.codDestino === train.cod_destino &&
+    item.lastGpsAt >= train.first_seen_at - 180);
+  const freshSpeed = motion && Date.now() / 1000 - motion.lastGpsAt <= 180 ? motion.latestSpeedKmh : null;
+  const speedLabel = (value) => value !== null && value !== undefined ? `${numberFmt.format(value)} km/h` : t("mapNoSpeed");
+  const fields = [
+    [t("mapTrainAverageSpeed"), speedLabel(motion?.averageSpeedKmh)],
+    [t("mapLatestSpeed"), speedLabel(freshSpeed)],
+    [t("mapObserved"), motion ? numberFmt.format(motion.observedMinutes) : "—"],
+    [t("mapGainedDelay"), motion ? numberFmt.format(motion.gainedDelayMinutes) : "—"],
+    [t("mapAverageDelay"), motion?.averageDelayMinutes !== null && motion?.averageDelayMinutes !== undefined ? `${numberFmt.format(motion.averageDelayMinutes)} ${t("minutes")}` : "—"],
+    [t("thRoute"), stationPair(train.origin_name, train.destination_name, train.cod_origen, train.cod_destino)],
+    [t("thNext"), nextStation(train.next_station_name, train.cod_est_sig, train.hora_llegada_sig_est)],
+    [t("thCorridor"), train.des_corridor || "-"],
+    [t("mapCoordinates"), `${train.latitud.toFixed(6)}, ${train.longitud.toFixed(6)}`],
+    [t("mapGps"), asTime(train.gps_time)],
+    [t("mapReceived"), asTime(train.last_seen_at)],
+  ];
+  const scrollTop = mapDetailContentEl.scrollTop;
+  mapDetailContentEl.innerHTML = `<span class="delay ${delayClass(train.ult_retraso)}">${escapeHtml(delayLabel(train.ult_retraso))}</span>
+    <dl>${fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
+  mapDetailContentEl.scrollTop = scrollTop;
+  mapLocationLinkEl.href = `https://www.openstreetmap.org/?mlat=${train.latitud}&mlon=${train.longitud}#map=16/${train.latitud}/${train.longitud}`;
+};
+
+const panToSelectedMapTrain = (closeUp = false) => {
+  const marker = trainMarkers.get(selectedMapTrainId);
+  if (!marker) return;
+  const position = marker.getLatLng();
+  if (closeUp) trainMap.setView(position, 16, { animate: false });
+  const mobile = window.matchMedia("(max-width: 672px)").matches;
+  trainMap.panInside(position, {
+    paddingTopLeft: [24, 24],
+    paddingBottomRight: mobile ? [24, mapTrainDetailEl.offsetHeight + 60] : [mapTrainDetailEl.offsetWidth + 36, 24],
+    animate: false,
+  });
+};
+
+const selectMapTrain = (id, closeUp = false) => {
+  if (id && !trainMarkers.has(id)) return;
+  if (selectedMapTrainId !== (id || null)) mapDetailContentEl.scrollTop = 0;
+  selectedMapTrainId = id || null;
+  if (selectedMapTrainId) trainMap.closePopup();
+  renderMapTrainDetail();
+  panToSelectedMapTrain(closeUp);
+};
+
+const fitTrainMap = () => {
+  if (!trainMap) return;
+  const points = [...trainMarkers.values()].map((marker) => marker.getLatLng());
+  if ($("#map-zones-visible").checked) for (const zone of latestDashboard?.mapAnalytics?.zones ?? []) points.push(...zone.bounds);
+  if (points.length === 0) return;
+  trainMap.fitBounds(points, {
+    padding: [24, 24], maxZoom: 8, animate: false,
+  });
+};
+
+const isMapDataStale = (ingestor) =>
+  ingestor.lastError || ingestor.lastSource === "cache-local" || !ingestor.lastSuccessAt ||
+  Date.now() / 1000 - ingestor.lastSuccessAt > ingestor.pollingIntervalMs / 1000 * 2;
+
+const renderTrainMap = (items, ingestor) => {
+  const L = window.L;
+  if (!trainMap) {
+    trainMap = L.map("train-map", { scrollWheelZoom: true, zoomControl: false, minZoom: 3, maxZoom: 19 }).setView([40, -3.7], 6);
+    trainMap.on("zoomend", updateMapZoom);
+    trainMap.on("popupopen", (event) => {
+      const close = event.popup.getElement().querySelector(".leaflet-popup-close-button");
+      close.setAttribute("aria-label", t("mapClose"));
+      close.title = t("mapClose");
+    });
+    updateMapZoom();
+    let webgl = null;
+    try { webgl = document.createElement("canvas").getContext("webgl2"); } catch {}
+    if (webgl) {
+      webgl.getExtension("WEBGL_lose_context")?.loseContext();
+      mapVectorLayer = L.maplibreGL({ style: mapStyleUrl(), attributionControl: { customAttribution: '<a href="https://openfreemap.org/">OpenFreeMap</a> · <a href="https://www.openmaptiles.org/">OpenMapTiles</a> · &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' } }).addTo(trainMap);
+      mapVectorLayer.getMaplibreMap().on("error", () => mapTileErrorEl.classList.remove("hidden"));
+      mapVectorLayer.getMaplibreMap().on("idle", () => mapTileErrorEl.classList.add("hidden"));
+    } else {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).on("loading", () => mapTileErrorEl.classList.add("hidden"))
+        .on("tileerror", () => mapTileErrorEl.classList.remove("hidden")).addTo(trainMap);
+    }
+    mapZoneLayer = L.layerGroup().addTo(trainMap);
+  }
+  renderMapAnalytics();
+
+  const valid = items.filter(isValidMapPosition);
+  const activeIds = new Set(valid.map((train) => train.cod_comercial));
+  for (const [id, marker] of trainMarkers) {
+    if (!activeIds.has(id)) {
+      marker.remove();
+      trainMarkers.delete(id);
+    }
+  }
+
+  // shortcut: co-located markers overlap; the train picker selects each one without clustering.
+  for (const train of valid) {
+    const delay = train.ult_retraso;
+    const label = `${t("thTrain")} ${train.cod_comercial} · ${train.product_name} · ${delayLabel(delay)}`;
+    const markerClass = `train-map-marker ${delayClass(delay)}`;
+    const markerIcon = L.divIcon({ className: markerClass, html: icon("train"), iconSize: [32, 32], iconAnchor: [16, 16] });
+    let marker = trainMarkers.get(train.cod_comercial);
+    if (marker) {
+      marker.setLatLng([train.latitud, train.longitud]);
+      if (marker.options.icon.options.className !== markerClass) marker.setIcon(markerIcon);
+    } else {
+      marker = L.marker([train.latitud, train.longitud], { icon: markerIcon, title: label, riseOnHover: true })
+        .on("click", () => selectMapTrain(train.cod_comercial)).addTo(trainMap);
+      trainMarkers.set(train.cod_comercial, marker);
+    }
+    marker.getElement().title = label;
+    marker.getElement().setAttribute("aria-label", label);
+  }
+
+  mapTrainSelectEl.innerHTML = `<option value="">${escapeHtml(t("mapSelectPlaceholder"))}</option>` +
+    [...valid].sort((a, b) => String(a.cod_comercial).localeCompare(String(b.cod_comercial), locale(), { numeric: true }))
+      .map((train) => `<option value="${escapeHtml(train.cod_comercial)}">${escapeHtml(train.cod_comercial)} · ${escapeHtml(train.product_name)} · ${escapeHtml(delayLabel(train.ult_retraso))}</option>`).join("");
+  mapTrainSelectEl.disabled = valid.length === 0;
+  renderMapTrainDetail();
+  mapFitBtnEl.disabled = trainMarkers.size === 0 && !latestDashboard?.mapAnalytics?.zones.length;
+  if (!mapHasFitted && latestDashboard?.mapAnalytics && (trainMarkers.size > 0 || latestDashboard.mapAnalytics.zones.length > 0)) {
+    fitTrainMap();
+    mapHasFitted = true;
+  }
+  mapStatusEl.textContent = isMapDataStale(ingestor) ? t("mapStale") : valid.length === 0 ? t("mapEmpty") :
+    `${t("mapCount").replace("{shown}", numberFmt.format(valid.length)).replace("{total}", numberFmt.format(items.length))} · ${t("statusLastUpdate")}: ${asTime(ingestor.lastSuccessAt)}`;
+};
+
+mapFitBtnEl.addEventListener("click", fitTrainMap);
+mapZoomInEl.addEventListener("click", () => trainMap?.zoomIn());
+mapZoomOutEl.addEventListener("click", () => trainMap?.zoomOut());
+mapTrainSelectEl.addEventListener("change", () => selectMapTrain(mapTrainSelectEl.value, true));
+$("#map-zones-visible").addEventListener("change", (event) => {
+  if (!trainMap) return;
+  if (event.target.checked) mapZoneLayer.addTo(trainMap);
+  else mapZoneLayer.remove();
+});
+$("#train-map").addEventListener("wheel", (event) => {
+  if (!event.ctrlKey) event.stopImmediatePropagation();
+}, { capture: true });
+$("#map-detail-close").addEventListener("click", () => selectMapTrain(""));
+$(".map-layout").addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && selectedMapTrainId) {
+    event.preventDefault();
+    selectMapTrain("");
+  }
+});
+$("#train-map").addEventListener("keydown", (event) => {
+  const marker = event.target.closest(".train-map-marker");
+  if (marker && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    marker.click();
+  }
+});
+$("#map-locate-train").addEventListener("click", () => panToSelectedMapTrain(true));
+trainsBodyEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-map-train]");
+  if (!button) return;
+  selectMapTrain(button.dataset.mapTrain, true);
+  $("#mapa").scrollIntoView({ block: "start", behavior: "smooth" });
+  $("#train-map").focus({ preventScroll: true });
+});
 
 const rerenderLocalFilteredPanels = () => {
   if (!latestDashboard) {
@@ -1267,6 +1618,7 @@ const loadDashboard = async () => {
   renderToday(data.today);
   if (data.historical) renderHistorical(data.historical);
   if (data.trains) renderTrains(data.trains);
+  renderTrainMap(data.mapTrains ?? [], data.ingestor);
 
   lastSeenEl.textContent = `${t("lastSignal")}: ${
     data.overview.lastSeenAtIso ? new Date(data.overview.lastSeenAtIso).toLocaleString(locale(), { hour12: false }) : "-"
@@ -1294,11 +1646,6 @@ const trainsParams = (limit, offset) => {
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.minDelay.trim()) params.set("minDelay", state.minDelay.trim());
   return params;
-};
-
-const loadTrains = async () => {
-  const data = await readJsonResponse(await apiFetch(`/api/trains?${trainsParams(state.limit, state.offset)}`));
-  renderTrains(data);
 };
 
 const checkForPendingSync = async () => {
@@ -1333,6 +1680,7 @@ const refresh = () => {
   })()
     .catch((error) => {
       setStatus(error instanceof Error ? error.message : String(error), "error");
+      mapStatusEl.textContent = t("mapStale");
     })
     .finally(() => {
       refreshPromise = null;
@@ -1425,7 +1773,7 @@ filtersForm.addEventListener("submit", (event) => {
   state.query = searchInput.value;
   state.minDelay = minDelayInput.value;
   state.offset = 0;
-  void loadTrains();
+  void refresh();
 });
 
 langSwitchEl.addEventListener("change", () => {
@@ -1571,7 +1919,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 const boot = async () => {
-  const themeController = initThemeController({ selectEl: themeSwitchEl });
+  const themeController = initThemeController({ selectEl: themeSwitchEl, onThemeChange: updateMapTheme });
   themeSwitchEl.value = themeController.getMode();
   langSwitchEl.value = state.lang;
   applyStaticTexts();
@@ -1581,6 +1929,9 @@ const boot = async () => {
 
   setInterval(() => {
     if (!document.hidden && !eventsConnected) void checkForPendingSync();
+    if (!document.hidden && latestDashboard && isMapDataStale(latestDashboard.ingestor)) {
+      mapStatusEl.textContent = t("mapStale");
+    }
   }, AUTO_REFRESH_MS);
 };
 

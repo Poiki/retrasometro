@@ -11,6 +11,8 @@ import { OpsPresetCache } from "../src/ops-cache";
 import { startServer } from "../src/server";
 import type { RunAnalytics } from "../src/analytics-worker";
 import type { NormalizedTrain } from "../src/types";
+import { calculateMapAnalytics, type MapObservation } from "../src/map-analytics";
+import { clipRailwayLine, getRailwaySegments } from "../src/railway-geometry";
 
 const dir = mkdtempSync(join(tmpdir(), "retrasometro-check-"));
 const originalConfig = { ...config };
@@ -26,6 +28,72 @@ const train: NormalizedTrain = {
 const now = Math.floor(Date.now() / 1000);
 const old = now - 100 * 86400;
 try {
+  const square = [[0, 0], [1, 1]];
+  assert.deepEqual(clipRailwayLine([[-1, 0.5], [2, 0.5]], square), [[[0, 0.5], [1, 0.5]]]);
+  assert.deepEqual(clipRailwayLine([[2, 0.5], [-1, 0.5]], square), [[[1, 0.5], [0, 0.5]]]);
+  assert.deepEqual(clipRailwayLine([[-1, 0.2], [-1, 0.8]], square), []);
+  assert.deepEqual(clipRailwayLine([[-1, -1], [0, 0]], square), [], "point contacts must not become black dots");
+  assert.deepEqual(clipRailwayLine([[0, 0], [1, 0]], square), [[[0, 0], [1, 0]]]);
+  const curvedRail: [number, number][] = [[0.2, 0.2], [0.4, 0.8], [0.9, 0.3]];
+  assert.deepEqual(clipRailwayLine(curvedRail, square), [curvedRail], "real track curvature must be retained");
+  assert.deepEqual(clipRailwayLine([[0.5, 0.5], [2, 0.5], [2, 0.8], [0.5, 0.8]], square), [
+    [[0.5, 0.5], [1, 0.5]], [[1, 0.8], [0.5, 0.8]],
+  ], "disjoint rail portions must never be joined across an unflagged area");
+  const actualRails = getRailwaySegments([[40.4, -3.7], [40.425, -3.675]]);
+  assert.ok(actualRails.length > 0, "the snapshot includes the real Atocha railway geometry");
+  assert.ok(actualRails.every((line) => line.length >= 2 && line.every(([lat, lon]) => lat >= 40.4 - 1e-9 && lat <= 40.425 + 1e-9 && lon >= -3.7 - 1e-9 && lon <= -3.675 + 1e-9)));
+  assert.deepEqual(getRailwaySegments([[-70, -100], [-69.975, -99.975]]), [], "areas without mapped railway must not create invented tracks");
+  const motionNow = Date.parse("2026-11-01T12:00:00Z") / 1000;
+  const point = (offset: number, overrides: Partial<MapObservation> = {}): MapObservation => ({
+    cod_comercial: "12345", cod_product: 2, cod_origen: "O", cod_destino: "D",
+    captured_at: motionNow - 180 + offset, gps_time: motionNow - 180 + offset,
+    latitud: 1, longitud: 0, ult_retraso: 0, source: "live", is_estimated: 0, ...overrides,
+  });
+  const movement = [point(0), point(60, { longitud: 0.01 }), point(180, { longitud: 0.02 })];
+  const speed = calculateMapAnalytics(movement, motionNow);
+  assert.equal(speed.trains[0]?.averageSpeedKmh, 44.5, "average speed uses total distance / GPS time, not the arithmetic mean of interval speeds");
+  assert.equal(speed.trains[0]?.latestSpeedKmh, 33.4);
+  assert.equal(speed.trains[0]?.observedMinutes, 3);
+  const stopped = calculateMapAnalytics([...movement, point(240, { longitud: 0.02 })], motionNow + 60);
+  assert.equal(stopped.trains[0]?.averageSpeedKmh, 33.4, "valid stationary time is included in average speed");
+  assert.equal(stopped.trains[0]?.latestSpeedKmh, 0);
+  const repeated = calculateMapAnalytics([movement[0]!, movement[1]!, point(70, { gps_time: motionNow - 120, longitud: 0.01 }), movement[2]!], motionNow);
+  assert.equal(repeated.trains[0]?.averageSpeedKmh, speed.trains[0]?.averageSpeedKmh);
+  assert.equal(repeated.repeatedSamples, 1, "repeated provider GPS timestamps must not create speed samples");
+  assert.equal(calculateMapAnalytics(movement.map((row) => ({ ...row, gps_time: row.gps_time! * 1000 })), motionNow).trains[0]?.averageSpeedKmh, speed.trains[0]?.averageSpeedKmh);
+  for (const bad of [
+    { gps_time: null }, { is_estimated: 1 }, { source: "recovered_snapshot" },
+    { latitud: 0, longitud: 0 }, { latitud: 95 }, { gps_time: motionNow - 10000 },
+  ]) {
+    assert.equal(calculateMapAnalytics([point(0, bad), point(60, bad)], motionNow).validIntervals, 0);
+  }
+  assert.equal(calculateMapAnalytics([point(0), point(60, { longitud: 30 })], motionNow).validIntervals, 0, "GPS teleports are rejected");
+  assert.equal(calculateMapAnalytics([point(0), point(300, { longitud: 0.01 })], motionNow + 120).validIntervals, 0, "long gaps must not be bridged");
+  assert.equal(calculateMapAnalytics([point(0), point(60, { cod_destino: "OTHER", longitud: 0.01 })], motionNow).validIntervals, 0, "different services sharing a train number must not be joined");
+  assert.equal(calculateMapAnalytics(movement, motionNow + 600).trains[0]?.latestSpeedKmh, null, "stale interval speed must not look live");
+  const recurrent = ["11111", "22222"].flatMap((code) => [0, 60, 120, 180].map((offset, i) =>
+    point(offset, { cod_comercial: code, latitud: 40.01, longitud: -3.02 + i * 0.002, ult_retraso: i })));
+  const ordered = (rows: MapObservation[]) => rows.sort((a, b) => a.captured_at - b.captured_at);
+  const hotspots = calculateMapAnalytics(ordered(recurrent), motionNow);
+  assert.equal(hotspots.zones.length, 1);
+  assert.equal(hotspots.zones[0]?.trainCount, 2);
+  assert.equal(hotspots.zones[0]?.gainedDelayMinutes, 6);
+  assert.equal(hotspots.zones[0]?.delayIntervals, 6);
+  assert.equal(calculateMapAnalytics(recurrent.filter((row) => row.cod_comercial === "11111"), motionNow).zones.length, 0, "one train does not establish a recurrent zone");
+  const braking = ["33333", "44444", "55555"].flatMap((code) => [-3.02, -3.005, -3.004].map((lon, i) =>
+    point(i * 60, { cod_comercial: code, latitud: 40.01, longitud: lon })));
+  const slowdown = calculateMapAnalytics(ordered(braking), motionNow);
+  assert.equal(slowdown.zones[0]?.slowdownIntervals, 3);
+  assert.equal(slowdown.zones[0]?.delayIntervals, 0, "observed slowing is kept separate from added delay");
+  const normal = Array.from({ length: 40 }, (_, i) => [point(0, { cod_comercial: `normal-${i}`, latitud: 40.01, longitud: -3.01 }), point(60, { cod_comercial: `normal-${i}`, latitud: 40.01, longitud: -3.009 })]).flat();
+  assert.equal(calculateMapAnalytics(ordered([...recurrent, ...normal]), motionNow).zones.length, 0, "rare anomalies in busy cells do not establish a recurrent zone");
+  assert.equal(calculateMapAnalytics(ordered(recurrent.map((row) => ({ ...row, ult_retraso: row.ult_retraso * 20 }))), motionNow).zones.length, 0, "schedule estimate corrections are not time physically lost in a minute");
+  const movementDb = new DB(join(dir, "movement.db"));
+  try {
+    for (const row of movement) movementDb.insertTrainObservations(null, row.captured_at, [{ train: { ...train, latitud: row.latitud, longitud: row.longitud, gpsTime: row.gps_time }, hash: "gps" }], "live", 0);
+    assert.equal(movementDb.getMapAnalytics(motionNow).trains[0]?.averageSpeedKmh, 44.5, "indexed observation queries preserve GPS analytics");
+  } finally { movementDb.close(); }
+
   db.insertSnapshot(train, old, "hash");
   db.insertTrainObservations(null, old, [{ train, hash: "hash" }], "live", 0);
   assert.equal(db.recoverObservationsFromSnapshots(old), 0, "recovery must not duplicate live observations");
@@ -83,6 +151,7 @@ try {
   config.port = 0;
   const dashboard = new DashboardPresetCache(db);
   const ops = new OpsPresetCache(db);
+  await dashboard.generate(24);
   await dashboard.generate(168);
   await ops.generate(168);
   const analytics: RunAnalytics = async (method, ...args) => {
@@ -92,8 +161,10 @@ try {
   };
   const meta = db.getCorridorMeta;
   const metrics = db.getOpsMetrics;
+  const mapMetrics = db.getMapAnalytics;
   db.getCorridorMeta = () => { throw new Error("cached route must not scan observations"); };
   db.getOpsMetrics = () => { throw new Error("cached route must not compute Ops"); };
+  db.getMapAnalytics = () => { throw new Error("dashboard requests must not scan minute observations"); };
   const events = new EventTarget();
   const server = startServer(db, ingestor, dashboard, ops, analytics, events);
   try {
@@ -102,9 +173,44 @@ try {
     assert.equal((await fetch(`${base}/api/dashboard`)).status, 401);
     const dashboardResponse = await fetch(`${base}/api/dashboard?historyHours=168&limit=1&q=99999`, { headers: { "x-api-key": await key() } });
     assert.equal(dashboardResponse.status, 200);
-    const payload = await dashboardResponse.json() as { trains: { total: number; items: Array<{ cod_comercial: string }> } };
+    const payload = await dashboardResponse.json() as { trains: { total: number; items: Array<{ cod_comercial: string }> }; mapAnalytics: { validIntervals: number; trains: unknown[] } };
     assert.equal(payload.trains.total, 1);
     assert.equal(payload.trains.items[0]?.cod_comercial, "99999");
+    assert.equal(payload.mapAnalytics.validIntervals, 0);
+    assert.equal(payload.mapAnalytics.trains.length, 0, "missing GPS evidence is never reported as zero speed");
+    for (let i = 0; i < 205; i++) {
+      db.upsertCurrentTrain({
+        train: { ...train, codComercial: `map-${String(i).padStart(3, "0")}`, ultRetraso: i },
+        nowEpoch: now, hash: `map-${i}`, snapshotAt: null,
+      });
+    }
+    type MapTrain = { cod_comercial: string; latitud: number; longitud: number; ult_retraso: number; product_name: string; gps_time: number | null; last_seen_at: number; cod_est_sig: string | null; des_corridor: string | null };
+    const readMap = async (params: string) => {
+      const response = await fetch(`${base}/api/dashboard?${params}`, { headers: { "x-api-key": await key(), "accept-language": "en" } });
+      assert.equal(response.status, 200);
+      return response.json() as Promise<{ mapTrains: MapTrain[]; trains: { total: number; items: MapTrain[] } }>;
+    };
+    const allMap = await readMap("q=map-&limit=1&offset=1");
+    assert.equal(allMap.trains.items.length, 1);
+    assert.equal(allMap.trains.items[0]?.cod_comercial, "map-203", "table retains delay sorting and pagination");
+    assert.equal(allMap.trains.total, 205);
+    assert.equal(allMap.mapTrains.length, 205, "map must include all filtered trains beyond the table and API page limits");
+    assert.ok(allMap.mapTrains.some((item) => item.cod_comercial === "map-000"));
+    assert.ok(allMap.mapTrains.every((item) => item.product_name), "map uses the existing product labels");
+    const trainDetail = allMap.mapTrains.find((item) => item.cod_comercial === "map-000")!;
+    assert.equal(trainDetail.gps_time, train.gpsTime, "train details retain the provider GPS time separately from ingestion time");
+    assert.equal(trainDetail.last_seen_at, now);
+    assert.equal(trainDetail.cod_est_sig, train.codEstSig, "train details retain the next station");
+    assert.equal(trainDetail.des_corridor, train.desCorridor);
+    const delayedMap = await readMap("q=map-&minDelay=200");
+    assert.equal(delayedMap.mapTrains.length, 5);
+    assert.ok(delayedMap.mapTrains.every((item) => item.ult_retraso >= 200), "map shares the table filters");
+    db.upsertCurrentTrain({ train: { ...train, codComercial: "map-000", latitud: 41, longitud: 2 }, nowEpoch: now + 1, hash: "moved", snapshotAt: null });
+    const movedMap = await readMap("q=map-000");
+    assert.equal(movedMap.mapTrains[0]?.latitud, 41, "map reads the latest position without waiting for historical caches");
+    assert.equal(movedMap.mapTrains[0]?.longitud, 2);
+    sql.query("DELETE FROM trains_current WHERE cod_comercial LIKE 'map-%'").run();
+    assert.deepEqual((await readMap("q=map-")).mapTrains, [], "expired trains disappear from the map");
     assert.equal((await fetch(`${base}/api/ops`, { headers: { "x-api-key": await key() } })).status, 200);
     const sharedKey = await key();
     const slow = fetch(`${base}/api/dashboard?historyFrom=${now-60}&historyTo=${now}`, { headers: { "x-api-key": sharedKey } });
@@ -131,9 +237,10 @@ try {
     };
     const coldStart = performance.now();
     const cold = await fetch(`${base}/api/dashboard`, { headers: { "x-api-key": await key() } });
-    const coldPayload = await cold.json() as { historicalPending: boolean; trains: { total: number } };
+    const coldPayload = await cold.json() as { historicalPending: boolean; trains: { total: number }; mapTrains: MapTrain[] };
     assert.equal(coldPayload.historicalPending, true);
     assert.equal(coldPayload.trains.total, 1);
+    assert.equal(coldPayload.mapTrains.length, 1, "live map remains available with a cold historical cache");
     assert.ok(performance.now() - coldStart < 200, "cold historical cache must not delay live data");
     await generated;
     const abort = new AbortController();
@@ -150,6 +257,7 @@ try {
     server.stop(true);
     db.getCorridorMeta = meta;
     db.getOpsMetrics = metrics;
+    db.getMapAnalytics = mapMetrics;
   }
   const worker = new Worker(new URL("../src/analytics-worker.ts", import.meta.url).href, { env: {
     ...process.env, DB_PATH: join(dir, "test.db"), DISPLAY_CACHE_DIR: join(dir, "worker-display"),
@@ -170,7 +278,7 @@ try {
       worker.postMessage({ id: 1, method: "getObservationArchiveStorage", args: [] });
     });
   } finally { worker.terminate(); }
-  console.log("OK: recovery, retention, atomic ingestion, archives, hourly boundaries, cache, auth, concurrent API and SSE");
+  console.log("OK: recovery, retention, atomic ingestion, archives, hourly boundaries, cache, live map, auth, concurrent API and SSE");
 } finally {
   Object.assign(config, originalConfig);
   globalThis.fetch = originalFetch;

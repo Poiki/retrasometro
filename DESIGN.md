@@ -11,7 +11,7 @@ Principios:
 - Un solo acento: el azul `#1f5eff` marca interactivo, activo y marca. No hay segundo color de marca.
 - Color = significado. Rojo y ámbar solo aparecen cuando un valor lo merece (retraso > 15 min, > 60 min, % de reincidencia alto). Una tarjeta neutra nunca lleva tinte.
 - Densidad productiva: paneles compactos, tablas con filas de 36-40 px, texto base 15 px. Nada de márgenes de landing page.
-- Sin librerías. Iconos SVG inline (sprite `<symbol>` en el `<head>` del body), gráfica SVG generada en JS, fuentes locales.
+- Iconos SVG inline (sprite `<symbol>` en el `<head>` del body), gráfica SVG generada en JS y fuentes locales. El mapa usa Leaflet y MapLibre servidos localmente con cartografía vectorial de OpenFreeMap.
 
 ## 2. Tokens
 
@@ -108,6 +108,12 @@ Etiqueta + pista de 8 px redondeada + valor (+ columna extra en `.bars.four`). R
 ### Gráfica de tendencia (`.trend-svg`)
 SVG `viewBox 640×240` generado en `renderTrendChart`: rejilla de 5 líneas, área y línea del pico (punteada, 12 % de opacidad) debajo del área y línea del retraso medio (22 % / trazo 2.5 px), puntos con `<title>` cuando hay ≤ 16 valores, etiquetas dd/mm. Serie: `historical.dailyTrend` (un punto por día).
 
+### Mapa (`.map-panel`)
+
+Mapa a todo el ancho, zoom mediante `Ctrl` + rueda y botones compactos de 44 px dentro del mapa; sin deslizador ni escala de kilómetros. La rueda normal desplaza la página. La tarjeta del tren flota sobre la esquina superior derecha; en ≤ 672 px se sitúa en la parte inferior y ocupa como máximo el 55 % del mapa. Lleva sombra de flotante, cierre con botón o `Esc` y cuerpo con desplazamiento interno. Conserva trayecto, próxima estación, corredor, coordenadas y horas de GPS e ingesta, con acciones para centrar la posición o abrir OpenStreetMap. El tren seleccionado queda visible fuera de la tarjeta, lleva contorno azul y se eleva sobre los demás. En zoom < 9, los marcadores no seleccionados se muestran compactos para dejar visible la cartografía; el selector permite acceder a trenes superpuestos.
+
+Cartografía vectorial Positron en claro y Dark en oscuro, con etiquetas nítidas y poco color de fondo para destacar los datos. Una franja compacta muestra el número de zonas y la fecha del análisis de 24 h. Los tramos ferroviarios reales dentro de las zonas detectadas se resaltan en negro con halo blanco; los datos no se representan con círculos ni superficies. Su ficha indica servicios, intervalos y evidencia de retraso o ralentización. La leyenda permite ocultar la capa y un texto breve explica su significado. Las tarjetas de tren conservan media de velocidad, último intervalo GPS, minutos observados y retraso añadido. La interfaz omite la media de la red, las fórmulas y las instrucciones de gestos.
+
 ### Pie (`.footer`)
 Fondo blanco, borde superior, marca pequeña + eslogan, enlaces (API, Documentación, Metodología, Código) y estado con punto verde replicando "Última actualización".
 
@@ -115,7 +121,7 @@ Fondo blanco, borde superior, marca pequeña + eslogan, enlaces (API, Documentac
 
 - Contenedor: 1480 px máx., padding 20 px (12 px en móvil).
 - Separación entre secciones y tarjetas: 16 px (`--surface-gap`); dentro de tarjeta 12-14 px.
-- Orden de la página: barra → hero → 10 KPI → trenes activos → 4 paneles en vivo (`.live-grid`, 4 col → 2 → 1) → estadísticas históricas (8 KPI compactos → hallazgos → `.hist-grid` 2 × 2: gráfica, distribución por tipo, rutas reincidentes, trenes reincidentes) → pie.
+- Orden de la página: barra → hero → 10 KPI → mapa en tiempo real → trenes activos → 4 paneles en vivo (`.live-grid`, 4 col → 2 → 1) → estadísticas históricas (8 KPI compactos → hallazgos → `.hist-grid` 2 × 2: gráfica, distribución por tipo, rutas reincidentes, trenes reincidentes) → pie.
 - Breakpoints: 1312 px, 1056 px, 672 px.
 
 ## 6. Profundidad

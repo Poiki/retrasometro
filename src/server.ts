@@ -522,8 +522,8 @@ const handleApi = async (
             protected: true,
             description:
               lang === "es"
-                ? "Métricas principales + estadísticas históricas (preset o rango personalizado)."
-                : "Main dashboard metrics + historical stats (preset or custom range).",
+                ? "Métricas principales, histórico, mapTrains sin paginación y mapAnalytics con velocidades GPS estimadas y zonas de las últimas 24 h."
+                : "Dashboard metrics, history, unpaginated mapTrains and mapAnalytics with estimated GPS speeds and zones from the last 24 h.",
             query: [
               {
                 name: "historyHours",
@@ -888,9 +888,18 @@ const handleProtectedApi = async (
     });
 
     const topCorridors = db.getTopCorridors(8);
-    let corridorMeta = (await dashboardPresetCache.read(24))?.corridorMeta ?? null;
+    const liveMapCache = await dashboardPresetCache.read(24);
+    let corridorMeta = liveMapCache?.corridorMeta ?? null;
     const typeInsights = db.getTodayTypeInsights();
     const topDelayed = db.listTrains({ query: null, minDelay: null, limit: 12, offset: 0 });
+    const mapTrains = withProductLabels(db.listTrains({
+      query: url.searchParams.get("q"),
+      minDelay: parseIntOrNull(url.searchParams.get("minDelay")),
+      limit: -1,
+      offset: 0,
+    }) as Array<{ cod_product: number }>, lang);
+    const trainLimit = Math.min(Math.max(parseIntOrNull(url.searchParams.get("limit")) ?? 120, 1), 200);
+    const trainOffset = Math.max(parseIntOrNull(url.searchParams.get("offset")) ?? 0, 0);
     const livePayload = {
       ok: true,
       language: lang,
@@ -926,16 +935,13 @@ const handleProtectedApi = async (
       byProduct,
       topCorridors,
       topDelayed: withProductLabels(topDelayed as Array<{ cod_product: number }>, lang),
+      mapTrains,
+      mapAnalytics: liveMapCache?.mapAnalytics ?? null,
       trains: {
-        total: db.countTrains(url.searchParams.get("q"), parseIntOrNull(url.searchParams.get("minDelay"))),
-        limit: Math.min(Math.max(parseIntOrNull(url.searchParams.get("limit")) ?? 120, 1), 200),
-        offset: Math.max(parseIntOrNull(url.searchParams.get("offset")) ?? 0, 0),
-        items: withProductLabels(db.listTrains({
-          query: url.searchParams.get("q"),
-          minDelay: parseIntOrNull(url.searchParams.get("minDelay")),
-          limit: Math.min(Math.max(parseIntOrNull(url.searchParams.get("limit")) ?? 120, 1), 200),
-          offset: Math.max(parseIntOrNull(url.searchParams.get("offset")) ?? 0, 0),
-        }) as Array<{ cod_product: number }>, lang),
+        total: mapTrains.length,
+        limit: trainLimit,
+        offset: trainOffset,
+        items: mapTrains.slice(trainOffset, trainOffset + trainLimit),
       },
       recentRuns: db.getRecentRuns(12),
       ingestor: ingestor.getStatus(),
