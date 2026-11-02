@@ -12,12 +12,12 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/pg": "^8.18.0"
+    "@types/pg": "^8.23.1"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "pg": "^8.20.0"
+    "pg": "^8.23.1"
   }
 }
